@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" name="SGM" commit="4576c3148b35a7236ed9fc32349dbe7ce2f457aa">
+<index version="1" name="SGM" commit="42410aff8e8938f6ca7a6cab658c09f41a6fe0f5">
   <category name="Chirpity">
     <reapack name="Chirpity analysis results to reaper regions SGM .lua" type="script">
       <metadata>
@@ -17,6 +17,15 @@
 - Per-item annotation import
 - Automatic label cleanup]]></changelog>
         <source main="main">https://github.com/SGMscripts/SGM/raw/11ca73c3e4f6e71bd6881b6cb8bcbd5eddbf0d26/Chirpity/Chirpity%20analysis%20results%20to%20reaper%20regions%20SGM%20.lua</source>
+      </version>
+      <version name="1.0.1" author="Sruthin" time="2026-04-29T04:51:34Z">
+        <changelog><![CDATA[v1.0.0
+- Initial release
+- Per-item annotation import
+- Automatic label cleanup
+v1.0.1
+- Restore missing main-loop logic]]></changelog>
+        <source main="main">https://github.com/SGMscripts/SRU/raw/6804ffe873199d6fc9ab76d6e42b43550f79a471/Chirpity/Chirpity%20analysis%20results%20to%20reaper%20regions%20SGM%20.lua</source>
       </version>
     </reapack>
     <reapack name="Chirpity Audacity  to reaper  with insertion offset SGM for Single item .lua" type="script">
@@ -143,10 +152,36 @@
 {\colortbl;\red255\green0\blue0;\red0\green0\blue255;}
 \widowctrl\hyphauto
 
-{\pard \ql \f0 \sa180 \li0 \fi0 . Open {\b Extensions \u8594 ? ReaPack \u8594 ? Browse packages} . Find and install scripts from {\b SoundsGoodman} . Access installed scripts from the {\b Action List} {\field{\*\fldinst{HYPERLINK "https://raw.githubusercontent.com/SGMscripts/SRU/refs/heads/master/index.xml"}}{\fldrslt{\ul
-https://raw.githubusercontent.com/SGMscripts/SGM/refs/heads/master/index.xml
+{\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel0 \b \fs36 SRU ReaScripts\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 Professional REAPER scripts for sound editing, sound-library metadata, annotation import, batch rendering, and wildlife-audio detection workflows.\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Install With ReaPack\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 1.\tx360\tab Install {\field{\*\fldinst{HYPERLINK "https://reapack.com/"}}{\fldrslt{\ul
+ReaPack
 }}}
-\par}
+ for REAPER.\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 2.\tx360\tab In REAPER, open {\b Extensions > ReaPack > Import repositories...}\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 3.\tx360\tab Add this repository URL:\sa180\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 \f1 https://raw.githubusercontent.com/SGMscripts/SRU/refs/heads/master/index.xml\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 4.\tx360\tab Open {\b Extensions > ReaPack > Browse packages}.\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 5.\tx360\tab Search for {\f1 SGM} or {\f1 Sruthin}, install the scripts you need, then run them from REAPER's Action List.\sa180\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Script Catalog\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 | Area | Script | Purpose | Requirements | | --- | --- | --- | --- | | Batch Render | {\f1 POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua} | Folder-based POLY/stereo batch renders with cover art, UCS metadata, channel-layout patching, and child-media sample-rate matching. | ReaImGui, optional {\f1 bwfmetaedit} | | SFX Detection | {\f1 SGM-Perch-BirdNET/SGM Perch and Birdnet Detect .lua} | ReaImGui front-end for Perch v2 and BirdNET detection workflows. | ReaImGui, Python helper files | | Chirpity | {\f1 Chirpity/Chirpity analysis results to reaper regions SGM .lua} | Imports per-item annotation TXT files as REAPER regions. | REAPER | | Chirpity | {\f1 Chirpity/Chirpity Audacity  to reaper  with insertion offset SGM for Single item .lua} | Imports annotation TXT files at the edit cursor as regions. | REAPER | | Chirpity | {\f1 Chirpity/Copy Unique Marker Names in Time Selection to Clipboard SGM .lua} | Copies unique marker and region names from the time selection, sorted by frequency. | SWS Extension | | Item Editing | {\f1 Item/Align Highest Transient (Smart Priority- Hovered Item > Selection SGM v2.lua} | Aligns hovered or selected item transients to the edit cursor with overlap handling. | REAPER | | UCS | {\f1 Ucsify/Add meta Marker and rename smart SGM.lua} | Renames takes from UCS clipboard data and adds META markers. | SWS Extension | | UCS | {\f1 Ucsify/Meta markers for selected items from ucsify csv SGM.lua} | Creates META markers from UCS CSV rows matching selected item BWF ranges. | SWS Extension | | UCS | {\f1 Ucsify/inject metaddata fileds SGM.lua} | Pre-populates project render metadata fields for UCS/ASWG workflows. | REAPER 6.33+ recommended |\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Repository Layout\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 \f1 .\line
+|-- Chirpity/             Annotation import and marker utility scripts\line
+|-- Item/                 Item editing utilities\line
+|-- SGM-Perch-BirdNET/    Detection UI script and Python helper files\line
+|-- Ucsify/               UCS metadata and META marker tools\line
+|-- index.xml             ReaPack package index\line
+`-- .github/workflows/    ReaPack validation and index deployment\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Development Notes\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Keep every installable script as a standalone {\f1 .lua} file with ReaPack metadata at the top.\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Bump the {\f1 @version} field when changing script behavior.\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Run {\f1 luac -p path/to/script.lua} before release when possible.\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab GitHub Actions run {\f1 reapack-index --check} on pushes and pull requests.\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab The {\f1 deploy} workflow updates {\f1 index.xml} after changes land on {\f1 master}.\sa180\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Support\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 Open an issue with the script name, REAPER version, operating system, installed extensions, and a short description of what happened. Screenshots or a small test project are helpful when the issue depends on project routing or metadata.\par}
 }
 ]]></description>
   </metadata>
