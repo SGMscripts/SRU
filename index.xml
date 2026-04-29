@@ -1,5 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" name="SGM" commit="42410aff8e8938f6ca7a6cab658c09f41a6fe0f5">
+<index version="1" name="SGM" commit="efaae827a3d7cf3e905371c7599dcb344f23c320">
+  <category name="Batch Render">
+    <reapack name="POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua" type="script" desc="POLY Smart Batch Render + Auto Cover Art IMGUI sruthin">
+      <metadata>
+        <description><![CDATA[{\rtf1\ansi\deff0{\fonttbl{\f0 \fswiss Helvetica;}{\f1 \fmodern Courier;}}
+{\colortbl;\red255\green0\blue0;\red0\green0\blue255;}
+\widowctrl\hyphauto
+
+{\pard \ql \f0 \sa180 \li0 \fi0 ReaImGui front-end for folder-based POLY smart batch renders with per-item cover-art injection. Select items on the parent/folder track, then run the batch render. The script forces "selected media items via master", can disable the selected-item render tail to avoid the common +1 second output issue, and restores track/project state after rendering.\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 For each selected parent item, the script reads the item's source image file and writes it to:\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab ID3:APIC_FILE\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab FLACPIC:APIC_FILE before rendering that item.\sa180\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 Optional modules:\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Inject UCS/ASWG metadata keys into Project Render Metadata\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Update next META marker RecType/Microphone/ixmlTrackLayout/ChannelLayout from active folder child tracks\par}
+{\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Post-write ixmlTrackLayout/ChannelLayout directly into rendered WAV/BWF files using bwfmetaedit\sa180\par}
+}
+]]></description>
+      </metadata>
+      <version name="2.0" author="Sruthin + Codex" time="2026-04-29T04:56:06Z">
+        <source main="main">https://github.com/SGMscripts/SRU/raw/23cf0a385f6c31b85d0faec3af4c23a5a26f8db4/Batch%20Render/POLY%20Smart%20Batch%20Render%20IMGUI%20sruthin%20-%20Auto%20Cover%20Art.lua</source>
+      </version>
+    </reapack>
+  </category>
   <category name="Chirpity">
     <reapack name="Chirpity analysis results to reaper regions SGM .lua" type="script">
       <metadata>
@@ -165,10 +188,11 @@ ReaPack
 {\pard \ql \f0 \sa0 \li360 \fi-360 4.\tx360\tab Open {\b Extensions > ReaPack > Browse packages}.\par}
 {\pard \ql \f0 \sa0 \li360 \fi-360 5.\tx360\tab Search for {\f1 SGM} or {\f1 Sruthin}, install the scripts you need, then run them from REAPER's Action List.\sa180\par}
 {\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Script Catalog\par}
-{\pard \ql \f0 \sa180 \li0 \fi0 | Area | Script | Purpose | Requirements | | --- | --- | --- | --- | | Batch Render | {\f1 POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua} | Folder-based POLY/stereo batch renders with cover art, UCS metadata, channel-layout patching, and child-media sample-rate matching. | ReaImGui, optional {\f1 bwfmetaedit} | | SFX Detection | {\f1 SGM-Perch-BirdNET/SGM Perch and Birdnet Detect .lua} | ReaImGui front-end for Perch v2 and BirdNET detection workflows. | ReaImGui, Python helper files | | Chirpity | {\f1 Chirpity/Chirpity analysis results to reaper regions SGM .lua} | Imports per-item annotation TXT files as REAPER regions. | REAPER | | Chirpity | {\f1 Chirpity/Chirpity Audacity  to reaper  with insertion offset SGM for Single item .lua} | Imports annotation TXT files at the edit cursor as regions. | REAPER | | Chirpity | {\f1 Chirpity/Copy Unique Marker Names in Time Selection to Clipboard SGM .lua} | Copies unique marker and region names from the time selection, sorted by frequency. | SWS Extension | | Item Editing | {\f1 Item/Align Highest Transient (Smart Priority- Hovered Item > Selection SGM v2.lua} | Aligns hovered or selected item transients to the edit cursor with overlap handling. | REAPER | | UCS | {\f1 Ucsify/Add meta Marker and rename smart SGM.lua} | Renames takes from UCS clipboard data and adds META markers. | SWS Extension | | UCS | {\f1 Ucsify/Meta markers for selected items from ucsify csv SGM.lua} | Creates META markers from UCS CSV rows matching selected item BWF ranges. | SWS Extension | | UCS | {\f1 Ucsify/inject metaddata fileds SGM.lua} | Pre-populates project render metadata fields for UCS/ASWG workflows. | REAPER 6.33+ recommended |\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 | Area | Script | Purpose | Requirements | | --- | --- | --- | --- | | Batch Render | {\f1 Batch Render/POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua} | Folder-based POLY/stereo batch renders with cover art, UCS metadata, channel-layout patching, and child-media sample-rate matching. | ReaImGui, optional {\f1 bwfmetaedit} | | SFX Detection | {\f1 SGM-Perch-BirdNET/SGM Perch and Birdnet Detect .lua} | ReaImGui front-end for Perch v2 and BirdNET detection workflows. | ReaImGui, Python helper files | | Chirpity | {\f1 Chirpity/Chirpity analysis results to reaper regions SGM .lua} | Imports per-item annotation TXT files as REAPER regions. | REAPER | | Chirpity | {\f1 Chirpity/Chirpity Audacity  to reaper  with insertion offset SGM for Single item .lua} | Imports annotation TXT files at the edit cursor as regions. | REAPER | | Chirpity | {\f1 Chirpity/Copy Unique Marker Names in Time Selection to Clipboard SGM .lua} | Copies unique marker and region names from the time selection, sorted by frequency. | SWS Extension | | Item Editing | {\f1 Item/Align Highest Transient (Smart Priority- Hovered Item > Selection SGM v2.lua} | Aligns hovered or selected item transients to the edit cursor with overlap handling. | REAPER | | UCS | {\f1 Ucsify/Add meta Marker and rename smart SGM.lua} | Renames takes from UCS clipboard data and adds META markers. | SWS Extension | | UCS | {\f1 Ucsify/Meta markers for selected items from ucsify csv SGM.lua} | Creates META markers from UCS CSV rows matching selected item BWF ranges. | SWS Extension | | UCS | {\f1 Ucsify/inject metaddata fileds SGM.lua} | Pre-populates project render metadata fields for UCS/ASWG workflows. | REAPER 6.33+ recommended |\par}
 {\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Repository Layout\par}
 {\pard \ql \f0 \sa180 \li0 \fi0 \f1 .\line
 |-- Chirpity/             Annotation import and marker utility scripts\line
+|-- Batch Render/         POLY batch render and cover-art workflows\line
 |-- Item/                 Item editing utilities\line
 |-- SGM-Perch-BirdNET/    Detection UI script and Python helper files\line
 |-- Ucsify/               UCS metadata and META marker tools\line
