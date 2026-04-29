@@ -4,6 +4,7 @@ All notable repository-level changes are tracked here. Individual ReaPack packag
 
 ## Unreleased
 
+- Moved the POLY Smart Batch Render script into the `Batch Render/` folder.
 - Reworked the README with ReaPack installation steps, a script catalog, repository layout, and support notes.
 - Added contributor guidance and repository hygiene files.
 - Ignored bundled Perch/BirdNET helper files from ReaPack package validation.
