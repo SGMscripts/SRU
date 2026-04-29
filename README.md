@@ -19,7 +19,7 @@ https://raw.githubusercontent.com/SGMscripts/SRU/refs/heads/master/index.xml
 
 | Area | Script | Purpose | Requirements |
 | --- | --- | --- | --- |
-| Batch Render | `POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua` | Folder-based POLY/stereo batch renders with cover art, UCS metadata, channel-layout patching, and child-media sample-rate matching. | ReaImGui, optional `bwfmetaedit` |
+| Batch Render | `Batch Render/POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua` | Folder-based POLY/stereo batch renders with cover art, UCS metadata, channel-layout patching, and child-media sample-rate matching. | ReaImGui, optional `bwfmetaedit` |
 | SFX Detection | `SGM-Perch-BirdNET/SGM Perch and Birdnet Detect .lua` | ReaImGui front-end for Perch v2 and BirdNET detection workflows. | ReaImGui, Python helper files |
 | Chirpity | `Chirpity/Chirpity analysis results to reaper regions SGM .lua` | Imports per-item annotation TXT files as REAPER regions. | REAPER |
 | Chirpity | `Chirpity/Chirpity Audacity  to reaper  with insertion offset SGM for Single item .lua` | Imports annotation TXT files at the edit cursor as regions. | REAPER |
@@ -34,6 +34,7 @@ https://raw.githubusercontent.com/SGMscripts/SRU/refs/heads/master/index.xml
 ```text
 .
 |-- Chirpity/             Annotation import and marker utility scripts
+|-- Batch Render/         POLY batch render and cover-art workflows
 |-- Item/                 Item editing utilities
 |-- SGM-Perch-BirdNET/    Detection UI script and Python helper files
 |-- Ucsify/               UCS metadata and META marker tools
