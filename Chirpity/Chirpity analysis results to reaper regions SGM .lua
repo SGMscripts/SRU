@@ -1,6 +1,6 @@
 -- @title        Import Per-Item Annotation TXT as Regions (Item Offset)
 -- @author       Sruthin
--- @version      1.0.0
+-- @version      1.0.1
 -- @about
 --   Imports annotation TXT files as regions for each selected item.
 --   Each selected item looks for a matching TXT file (by item name)
@@ -11,6 +11,8 @@
 --   - Initial release
 --   - Per-item annotation import
 --   - Automatic label cleanup
+--   v1.0.1
+--   - Restore missing main-loop logic
 ------------------------------------------------------------
 
 
@@ -24,6 +26,13 @@ end
 -- Example: "Bird.wav" → "Bird"
 local function removeExtension(filename)
   return filename:match("^(.*)%.") or filename
+end
+
+local function fileExists(path)
+  local file = io.open(path, "r")
+  if not file then return false end
+  file:close()
+  return true
 end
 
 -- Process a single TXT file for one item
@@ -91,4 +100,29 @@ local function main()
 
   local totalCount = 0
   for i = 0, itemCount - 1 do
-    local item = reaper.GetSelectedMediaIte
+    local item = reaper.GetSelectedMediaItem(0, i)
+    local take = item and reaper.GetActiveTake(item)
+
+    if take then
+      local _, takeName = reaper.GetSetMediaItemTakeInfo_String(
+        take, "P_NAME", "", false
+      )
+      local baseName = removeExtension(takeName or "")
+      local txtPath = dir .. baseName .. ".txt"
+
+      if baseName ~= "" and fileExists(txtPath) then
+        totalCount = totalCount + processFileForItem(txtPath, item)
+      else
+        reaper.ShowConsoleMsg("⚠️ Missing TXT for item: " .. tostring(takeName) .. "\n")
+      end
+    else
+      reaper.ShowConsoleMsg("⚠️ Selected item has no active take.\n")
+    end
+  end
+
+  reaper.Undo_EndBlock("Import per-item annotation regions", -1)
+  reaper.UpdateArrange()
+  reaper.ShowConsoleMsg("✅ Imported " .. tostring(totalCount) .. " regions from selected items.\n")
+end
+
+main()
