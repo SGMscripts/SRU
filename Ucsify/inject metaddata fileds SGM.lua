@@ -1,5 +1,5 @@
 -- @description UCS Inject Render Metadata (Standalone)
--- @author You
+-- @author SGM
 -- @version 1.1.0
 -- @about
 --   Pre-populates Project Render Metadata with all UCS / Extended / ASWG keys
@@ -259,4 +259,3 @@ reaper.ShowMessageBox(
   (direct_values and "literal values" or "marker references") .. ").",
   "UCS Inject Metadata", 0
 )
-

@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# REAPER/local backup files
+*.RPP-bak
+*.rpp-bak
+*.reapeaks
+*.autosave
+
+# Lua/Python generated files
+*.luac
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Local scratch/export folders
+tmp/
+temp/
+_release/
+*.zip
+
