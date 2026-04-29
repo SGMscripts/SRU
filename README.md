@@ -25,6 +25,7 @@ https://raw.githubusercontent.com/SGMscripts/SRU/refs/heads/master/index.xml
 | Chirpity | `Chirpity/Chirpity Audacity  to reaper  with insertion offset SGM for Single item .lua` | Imports annotation TXT files at the edit cursor as regions. | REAPER |
 | Chirpity | `Chirpity/Copy Unique Marker Names in Time Selection to Clipboard SGM .lua` | Copies unique marker and region names from the time selection, sorted by frequency. | SWS Extension |
 | Item Editing | `Item/Align Highest Transient (Smart Priority- Hovered Item > Selection SGM v2.lua` | Aligns hovered or selected item transients to the edit cursor with overlap handling. | REAPER |
+| Item Editing | `Item/Create Folder Signal Region Item or Stretch Image SGM.lua` | Creates a folder-track region item from child-track signal under the cursor, or stretches an overlapping image item to that range. | REAPER |
 | UCS | `Ucsify/Add meta Marker and rename smart SGM.lua` | Renames takes from UCS clipboard data and adds META markers. | SWS Extension |
 | UCS | `Ucsify/Meta markers for selected items from ucsify csv SGM.lua` | Creates META markers from UCS CSV rows matching selected item BWF ranges. | SWS Extension |
 | UCS | `Ucsify/inject metaddata fileds SGM.lua` | Pre-populates project render metadata fields for UCS/ASWG workflows. | REAPER 6.33+ recommended |
