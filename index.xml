@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" name="SGM" commit="efaae827a3d7cf3e905371c7599dcb344f23c320">
+<index version="1" name="SGM" commit="514ff9088b45010ea288a3dbe7d5bf7a60328150">
   <category name="Batch Render">
     <reapack name="POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua" type="script" desc="POLY Smart Batch Render + Auto Cover Art IMGUI sruthin">
       <metadata>
@@ -91,6 +91,22 @@ v1.0.1
     <reapack name="Align Highest Transient (Smart Priority- Hovered Item &gt; Selection SGM v2.lua" type="script" desc="Align Highest Transient (Smart Priority: Hovered Item &gt; Selection) to Edit Cursor + Crossfade + Auto-Select Hovered Item">
       <version name="2.5" author="SGM" time="2025-12-27T23:36:30Z">
         <source main="main">https://github.com/SGMscripts/SGM/raw/cdc43190c0db4a77d4fd617536dbff4fe94200d4/Item/Align%20Highest%20Transient%20(Smart%20Priority-%20Hovered%20Item%20%3E%20Selection%20SGM%20v2.lua</source>
+      </version>
+    </reapack>
+    <reapack name="Create Folder Signal Region Item or Stretch Image SGM.lua" type="script" desc="Create Folder Signal Region Item or Stretch Image SGM">
+      <metadata>
+        <description><![CDATA[{\rtf1\ansi\deff0{\fonttbl{\f0 \fswiss Helvetica;}{\f1 \fmodern Courier;}}
+{\colortbl;\red255\green0\blue0;\red0\green0\blue255;}
+\widowctrl\hyphauto
+
+{\pard \ql \f0 \sa180 \li0 \fi0 Select a folder parent track and place the edit cursor over audio/MIDI signal on its child tracks. The script finds the continuous child-track signal region under the cursor, then either stretches an overlapping image item on the folder track to that range or creates an empty named item there.\par}
+}
+]]></description>
+      </metadata>
+      <version name="1.0.0" author="SGM" time="2026-04-29T08:00:15Z">
+        <changelog><![CDATA[v1.0.0
+- Initial ReaPack release]]></changelog>
+        <source main="main">https://github.com/SGMscripts/SRU/raw/c8ae692ee3e19d9c7b2aaca98c774864546e6025/Item/Create%20Folder%20Signal%20Region%20Item%20or%20Stretch%20Image%20SGM.lua</source>
       </version>
     </reapack>
   </category>
@@ -188,7 +204,7 @@ ReaPack
 {\pard \ql \f0 \sa0 \li360 \fi-360 4.\tx360\tab Open {\b Extensions > ReaPack > Browse packages}.\par}
 {\pard \ql \f0 \sa0 \li360 \fi-360 5.\tx360\tab Search for {\f1 SGM} or {\f1 Sruthin}, install the scripts you need, then run them from REAPER's Action List.\sa180\par}
 {\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Script Catalog\par}
-{\pard \ql \f0 \sa180 \li0 \fi0 | Area | Script | Purpose | Requirements | | --- | --- | --- | --- | | Batch Render | {\f1 Batch Render/POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua} | Folder-based POLY/stereo batch renders with cover art, UCS metadata, channel-layout patching, and child-media sample-rate matching. | ReaImGui, optional {\f1 bwfmetaedit} | | SFX Detection | {\f1 SGM-Perch-BirdNET/SGM Perch and Birdnet Detect .lua} | ReaImGui front-end for Perch v2 and BirdNET detection workflows. | ReaImGui, Python helper files | | Chirpity | {\f1 Chirpity/Chirpity analysis results to reaper regions SGM .lua} | Imports per-item annotation TXT files as REAPER regions. | REAPER | | Chirpity | {\f1 Chirpity/Chirpity Audacity  to reaper  with insertion offset SGM for Single item .lua} | Imports annotation TXT files at the edit cursor as regions. | REAPER | | Chirpity | {\f1 Chirpity/Copy Unique Marker Names in Time Selection to Clipboard SGM .lua} | Copies unique marker and region names from the time selection, sorted by frequency. | SWS Extension | | Item Editing | {\f1 Item/Align Highest Transient (Smart Priority- Hovered Item > Selection SGM v2.lua} | Aligns hovered or selected item transients to the edit cursor with overlap handling. | REAPER | | UCS | {\f1 Ucsify/Add meta Marker and rename smart SGM.lua} | Renames takes from UCS clipboard data and adds META markers. | SWS Extension | | UCS | {\f1 Ucsify/Meta markers for selected items from ucsify csv SGM.lua} | Creates META markers from UCS CSV rows matching selected item BWF ranges. | SWS Extension | | UCS | {\f1 Ucsify/inject metaddata fileds SGM.lua} | Pre-populates project render metadata fields for UCS/ASWG workflows. | REAPER 6.33+ recommended |\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 | Area | Script | Purpose | Requirements | | --- | --- | --- | --- | | Batch Render | {\f1 Batch Render/POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua} | Folder-based POLY/stereo batch renders with cover art, UCS metadata, channel-layout patching, and child-media sample-rate matching. | ReaImGui, optional {\f1 bwfmetaedit} | | SFX Detection | {\f1 SGM-Perch-BirdNET/SGM Perch and Birdnet Detect .lua} | ReaImGui front-end for Perch v2 and BirdNET detection workflows. | ReaImGui, Python helper files | | Chirpity | {\f1 Chirpity/Chirpity analysis results to reaper regions SGM .lua} | Imports per-item annotation TXT files as REAPER regions. | REAPER | | Chirpity | {\f1 Chirpity/Chirpity Audacity  to reaper  with insertion offset SGM for Single item .lua} | Imports annotation TXT files at the edit cursor as regions. | REAPER | | Chirpity | {\f1 Chirpity/Copy Unique Marker Names in Time Selection to Clipboard SGM .lua} | Copies unique marker and region names from the time selection, sorted by frequency. | SWS Extension | | Item Editing | {\f1 Item/Align Highest Transient (Smart Priority- Hovered Item > Selection SGM v2.lua} | Aligns hovered or selected item transients to the edit cursor with overlap handling. | REAPER | | Item Editing | {\f1 Item/Create Folder Signal Region Item or Stretch Image SGM.lua} | Creates a folder-track region item from child-track signal under the cursor, or stretches an overlapping image item to that range. | REAPER | | UCS | {\f1 Ucsify/Add meta Marker and rename smart SGM.lua} | Renames takes from UCS clipboard data and adds META markers. | SWS Extension | | UCS | {\f1 Ucsify/Meta markers for selected items from ucsify csv SGM.lua} | Creates META markers from UCS CSV rows matching selected item BWF ranges. | SWS Extension | | UCS | {\f1 Ucsify/inject metaddata fileds SGM.lua} | Pre-populates project render metadata fields for UCS/ASWG workflows. | REAPER 6.33+ recommended |\par}
 {\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Repository Layout\par}
 {\pard \ql \f0 \sa180 \li0 \fi0 \f1 .\line
 |-- Chirpity/             Annotation import and marker utility scripts\line
