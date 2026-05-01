@@ -4,6 +4,7 @@ All notable repository-level changes are tracked here. Individual ReaPack packag
 
 ## Unreleased
 
+- Updated the POLY Smart Batch Render UI to hide advanced ChannelLayout/URL metadata toggles while keeping those writes enabled.
 - Added `Item/Create Folder Signal Region Item or Stretch Image SGM.lua`.
 - Moved the POLY Smart Batch Render script into the `Batch Render/` folder.
 - Reworked the README with ReaPack installation steps, a script catalog, repository layout, and support notes.

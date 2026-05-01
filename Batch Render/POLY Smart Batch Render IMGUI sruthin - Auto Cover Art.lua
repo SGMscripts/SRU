@@ -1,5 +1,5 @@
 -- @description POLY Smart Batch Render + Auto Cover Art IMGUI sruthin
--- @version 2.0
+-- @version 2.1
 -- @author Sruthin + Codex
 -- @about
 --   ReaImGui front-end for folder-based POLY smart batch renders with
@@ -19,6 +19,10 @@
 --     - Inject UCS/ASWG metadata keys into Project Render Metadata
 --     - Update next META marker RecType/Microphone/ixmlTrackLayout/ChannelLayout from active folder child tracks
 --     - Post-write ixmlTrackLayout/ChannelLayout directly into rendered WAV/BWF files using bwfmetaedit
+--
+-- @changelog
+--   v2.1
+--   - Hide advanced ChannelLayout/URL metadata toggles and keep those writes enabled by default
 
 local r = reaper
 
@@ -283,10 +287,12 @@ state.inject_ucs_metadata = get_ext_bool("inject_ucs_metadata", true)
 state.update_meta_marker = get_ext_bool("update_meta_marker", false)
 state.post_write_ixml_layout = get_ext_bool("post_write_ixml_layout", true)
 state.post_patch_channel_mask = get_ext_bool("post_patch_channel_mask", true)
-state.force_channel_layout_render_metadata = get_ext_bool("force_channel_layout_render_metadata", true)
+state.force_channel_layout_render_metadata = true
+set_ext_bool("force_channel_layout_render_metadata", true)
 state.mirror_channel_layout_to_description = false
 set_ext_bool("mirror_channel_layout_to_description", false)
-state.append_track_info_to_url = get_ext_bool("append_track_info_to_url", true)
+state.append_track_info_to_url = true
+set_ext_bool("append_track_info_to_url", true)
 if state.render_mode ~= RENDER_MODE_POLY and state.render_mode ~= RENDER_MODE_STEREO then
   state.render_mode = RENDER_MODE_POLY
 end
@@ -3126,12 +3132,6 @@ local function draw_overview()
 
   changed, state.post_patch_channel_mask = r.ImGui_Checkbox(ctx, "Post-patch WAV channel mask in rendered files", state.post_patch_channel_mask)
   if changed then set_ext_bool("post_patch_channel_mask", state.post_patch_channel_mask) end
-
-  changed, state.force_channel_layout_render_metadata = r.ImGui_Checkbox(ctx, "Force-write ChannelLayout into technical WAV/BWF metadata keys", state.force_channel_layout_render_metadata)
-  if changed then set_ext_bool("force_channel_layout_render_metadata", state.force_channel_layout_render_metadata) end
-
-  changed, state.append_track_info_to_url = r.ImGui_Checkbox(ctx, "Append track layout info into URL metadata", state.append_track_info_to_url)
-  if changed then set_ext_bool("append_track_info_to_url", state.append_track_info_to_url) end
 
   local render_accent = push_button_accent("primary")
   if r.ImGui_Button(ctx, "Render Now", 220, 32.0) then
