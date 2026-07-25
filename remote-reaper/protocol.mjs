@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 export const PROTOCOL_VERSION = 1;
 export const MAX_SCRIPT_BYTES = 512 * 1024;
 export const MAX_SOCKET_PAYLOAD_BYTES = 600 * 1024;
+export const MAX_INVITE_ACCEPT_WINDOW_MS = 90 * 60 * 1000;
 export const ALLOWED_ACTIONS = new Set([
   "story-importer",
   "cue-recall",
@@ -36,7 +37,7 @@ export function parseJsonMessage(raw) {
   }
 }
 
-export function validatePairMessage(value) {
+export function validatePairMessage(value, now = Date.now()) {
   if (!value || value.type !== "pair" || Number(value.version) !== PROTOCOL_VERSION) {
     throw new Error("Unsupported pairing message.");
   }
@@ -50,12 +51,33 @@ export function validatePairMessage(value) {
   if (token.length < 16 || token.length > 256) {
     throw new Error("Pairing token must contain 16–256 characters.");
   }
+  const hasInviteDeadline =
+    value.inviteAcceptUntil !== undefined &&
+    value.inviteAcceptUntil !== null &&
+    value.inviteAcceptUntil !== "";
+  let inviteAcceptUntil = 0;
+  if (hasInviteDeadline) {
+    if (value.role !== "companion") {
+      throw new Error("Only the Mac companion can set an invite acceptance deadline.");
+    }
+    inviteAcceptUntil = Number(value.inviteAcceptUntil);
+    if (!Number.isSafeInteger(inviteAcceptUntil)) {
+      throw new Error("Invite acceptance deadline is invalid.");
+    }
+    if (inviteAcceptUntil <= now) {
+      throw new Error("This one-click REAPER invite has expired.");
+    }
+    if (inviteAcceptUntil - now > MAX_INVITE_ACCEPT_WINDOW_MS) {
+      throw new Error("One-click REAPER invites cannot remain valid for more than 90 minutes.");
+    }
+  }
   return {
     type: "pair",
     version: PROTOCOL_VERSION,
     role: value.role,
     machineId: String(value.machineId),
     token,
+    inviteAcceptUntil,
     reaperOnline: Boolean(value.reaperOnline),
     readinessMessage: String(value.readinessMessage || "").slice(0, 500),
   };

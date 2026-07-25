@@ -15,6 +15,7 @@ import {
 type Settings = {
   title: string;
   lead: string;
+  yourName: string;
   rival: string;
   runtimeMinutes: RuntimeMinutes;
   places: number;
@@ -38,6 +39,17 @@ type ProviderConfig = {
   baseUrl: string;
 };
 
+type VoiceOption = {
+  voiceId: string;
+  name: string;
+  category: string | null;
+  description: string | null;
+  labels: Record<string, string>;
+  previewUrl: string | null;
+};
+
+type VoiceRole = "narrator" | "lead" | "rival";
+
 type AISettings = {
   provider: AIProvider;
   openai: ProviderConfig;
@@ -60,6 +72,18 @@ type RemoteReaperSettings = {
   machineId: string;
   pairingToken: string;
 };
+
+type RemoteInviteState = "idle" | "accepted" | "expired" | "invalid";
+
+type RemoteInviteResult =
+  | { status: "none" | "expired" | "invalid" }
+  | {
+      status: "accepted";
+      settings: RemoteReaperSettings;
+      nonce: string;
+      issuedAt: number;
+      expiresAt: number;
+    };
 
 type RemoteReaperState =
   | "disconnected"
@@ -104,8 +128,17 @@ const AI_STORAGE_KEY = "story-cue-studio-ai-settings-v1";
 const VOICE_STORAGE_KEY = "story-cue-studio-voice-settings-v1";
 const REMOTE_REAPER_STORAGE_KEY = "story-cue-studio-remote-reaper-v1";
 const REMOTE_PENDING_STORAGE_KEY = "story-cue-studio-remote-pending-v1";
+const REMOTE_INVITE_SETTINGS_STORAGE_KEY = "story-cue-studio-remote-invite-v1";
 const CUE_TAG_PATTERN = /^\s*\[(SFX|AMBIENT|MUSIC):\s*(.*?)\]\s*$/i;
 const REMOTE_PROTOCOL_VERSION = 1;
+const REMOTE_INVITE_PREFIX = "#reaper-invite=";
+const REMOTE_INVITE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const REMOTE_INVITE_MAX_LIFETIME_MS = 90 * 60 * 1000;
+const REMOTE_INVITE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+const PUBLIC_VOICE_LOOKUP_IDS = new Set([
+  "cPoqAvGWCPfCfyPMwe4z",
+  "si0svtk05vPEuvwAW93c",
+]);
 
 const defaultRemoteReaperSettings: RemoteReaperSettings = {
   relayUrl: "",
@@ -251,6 +284,12 @@ const sample = `Maya heard the phone ring in the abandoned station. Rain hammere
 
 function clean(value: string, fallback: string) {
   return value.trim() || fallback;
+}
+
+function leadCharacterName(settings: Settings) {
+  return settings.useMe
+    ? clean(settings.yourName, "You")
+    : clean(settings.lead, "Lead");
 }
 
 function spokenWordCount(script: string) {
@@ -447,7 +486,7 @@ function voiceLine(
   intensity = 2,
   pace = "normal",
 ) {
-  const lead = clean(settings.lead, settings.useMe ? "You" : "Lead");
+  const lead = leadCharacterName(settings);
   const rival = clean(settings.rival, "Rival");
   const voiceId = speaker === "Narrator"
     ? settings.narratorVoiceId
@@ -471,7 +510,7 @@ function voiceLine(
 
 function localStoryboard(story: string, settings: Settings) {
   const profile = runtimeProfile(settings.runtimeMinutes);
-  const lead = clean(settings.lead, settings.useMe ? "You" : "Lead");
+  const lead = leadCharacterName(settings);
   const rival = clean(settings.rival, "Rival");
   const runtimeStory = settings.runtimeMinutes === 3 ? limitProseWords(story, 90) : story;
   const sentences = runtimeStory.replace(/\s+/g, " ").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [runtimeStory];
@@ -570,6 +609,7 @@ function cloneAISettings(settings: AISettings): AISettings {
 function normalizeRelayUrl(value: string) {
   const trimmed = value.trim();
   if (!trimmed) throw new Error("Enter the secure WebSocket relay URL.");
+  if (trimmed.length > 2048) throw new Error("The relay URL is too long.");
   let url: URL;
   try {
     url = new URL(trimmed);
@@ -581,11 +621,15 @@ function normalizeRelayUrl(value: string) {
   }
   const localDevelopment =
     url.protocol === "ws:" &&
-    (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+    (
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "[::1]"
+    );
   if (url.protocol !== "wss:" && !localDevelopment) {
     throw new Error("Internet relay URLs must begin with wss://.");
   }
-  url.hash = "";
+  if (url.hash) throw new Error("The relay URL cannot contain a fragment.");
   return url.toString();
 }
 
@@ -602,7 +646,119 @@ function validateRemoteReaperSettings(settings: RemoteReaperSettings) {
   if (pairingToken.length > 256) {
     throw new Error("Pairing tokens cannot exceed 256 characters.");
   }
+  if (!/^[\x21-\x7e]+$/.test(pairingToken)) {
+    throw new Error("Pairing tokens must contain printable characters without spaces.");
+  }
   return { relayUrl, machineId, pairingToken };
+}
+
+function decodeRemoteInvitePayload(encoded: string): unknown {
+  if (
+    encoded.length < 32 ||
+    encoded.length > 8192 ||
+    encoded.length % 4 === 1 ||
+    !/^[A-Za-z0-9_-]+$/.test(encoded)
+  ) {
+    throw new Error("Invalid invite encoding.");
+  }
+  const padded = encoded.replace(/-/g, "+").replace(/_/g, "/").padEnd(
+    encoded.length + ((4 - (encoded.length % 4)) % 4),
+    "=",
+  );
+  const binary = atob(padded);
+  if (binary.length > 4096) throw new Error("Invite payload is too large.");
+  const canonical = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
+  if (canonical !== encoded) throw new Error("Invalid invite encoding.");
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  return JSON.parse(text) as unknown;
+}
+
+function parseRemoteReaperInviteFragment(
+  fragment: string,
+  now = Date.now(),
+): RemoteInviteResult {
+  if (!fragment.startsWith(REMOTE_INVITE_PREFIX)) return { status: "none" };
+  try {
+    const value = decodeRemoteInvitePayload(fragment.slice(REMOTE_INVITE_PREFIX.length));
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return { status: "invalid" };
+    }
+    const payload = value as Record<string, unknown>;
+    const requiredKeys = [
+      "version",
+      "relayUrl",
+      "machineId",
+      "token",
+      "nonce",
+      "issuedAt",
+      "expiresAt",
+    ].sort();
+    const payloadKeys = Object.keys(payload).sort();
+    if (
+      payloadKeys.length !== requiredKeys.length ||
+      !requiredKeys.every((key, index) => payloadKeys[index] === key)
+    ) {
+      return { status: "invalid" };
+    }
+    if (payload.version !== REMOTE_PROTOCOL_VERSION) return { status: "invalid" };
+    if (
+      typeof payload.relayUrl !== "string" ||
+      typeof payload.machineId !== "string" ||
+      typeof payload.token !== "string" ||
+      typeof payload.nonce !== "string"
+    ) {
+      return { status: "invalid" };
+    }
+    if (
+      payload.relayUrl !== payload.relayUrl.trim() ||
+      payload.machineId !== payload.machineId.trim() ||
+      payload.token !== payload.token.trim()
+    ) {
+      return { status: "invalid" };
+    }
+    const nonce = payload.nonce;
+    if (!/^[A-Za-z0-9_-]{22,128}$/.test(nonce)) return { status: "invalid" };
+    if (
+      payload.token.length < 43 ||
+      payload.token.length > 256 ||
+      !/^[A-Za-z0-9_-]+$/.test(payload.token)
+    ) {
+      return { status: "invalid" };
+    }
+    const inviteRelayUrl = new URL(payload.relayUrl);
+    if (inviteRelayUrl.search || inviteRelayUrl.hash) return { status: "invalid" };
+    const issuedAt = payload.issuedAt;
+    const expiresAt = payload.expiresAt;
+    if (
+      typeof issuedAt !== "number" ||
+      typeof expiresAt !== "number" ||
+      !Number.isSafeInteger(issuedAt) ||
+      !Number.isSafeInteger(expiresAt) ||
+      issuedAt < 1_704_067_200_000 ||
+      issuedAt > now + REMOTE_INVITE_CLOCK_SKEW_MS ||
+      issuedAt < now - REMOTE_INVITE_MAX_AGE_MS ||
+      expiresAt <= issuedAt ||
+      expiresAt - issuedAt > REMOTE_INVITE_MAX_LIFETIME_MS
+    ) {
+      return { status: "invalid" };
+    }
+    const settings = validateRemoteReaperSettings({
+      relayUrl: payload.relayUrl,
+      machineId: payload.machineId,
+      pairingToken: payload.token,
+    });
+    if (expiresAt <= now) return { status: "expired" };
+    return {
+      status: "accepted",
+      settings,
+      nonce,
+      issuedAt,
+      expiresAt,
+    };
+  } catch {
+    return { status: "invalid" };
+  }
 }
 
 function generatePairingToken() {
@@ -631,6 +787,7 @@ export default function Home() {
   const [settings, setSettings] = useState<Settings>({
     title: "The Last Signal",
     lead: "Maya",
+    yourName: "",
     rival: "Elias",
     runtimeMinutes: 3,
     places: 2,
@@ -659,25 +816,70 @@ export default function Home() {
   const [remoteState, setRemoteState] = useState<RemoteReaperState>("disconnected");
   const [remoteStateMessage, setRemoteStateMessage] = useState("Add a secure relay URL to control REAPER from another network.");
   const [remoteConnectRevision, setRemoteConnectRevision] = useState(0);
-  const [showPairingToken, setShowPairingToken] = useState(false);
+  const [remoteInviteState, setRemoteInviteState] = useState<RemoteInviteState>("idle");
+  const [remoteInviteMessage, setRemoteInviteMessage] = useState(
+    "Guests only need the private invite link from the REAPER Mac. No relay address, machine ID, or token typing is required.",
+  );
   const [isEmbeddedBridge, setIsEmbeddedBridge] = useState(false);
   const [aiSettings, setAISettings] = useState<AISettings>(cloneAISettings(defaultAISettings));
   const [draftAISettings, setDraftAISettings] = useState<AISettings>(cloneAISettings(defaultAISettings));
   const [aiSettingsOpen, setAISettingsOpen] = useState(false);
   const [showAPIKey, setShowAPIKey] = useState(false);
   const [aiSettingsStatus, setAISettingsStatus] = useState("");
-  const characters = useMemo(() => [clean(settings.lead, settings.useMe ? "You" : "Lead"), clean(settings.rival, "Rival")], [settings]);
+  const [voiceOptions, setVoiceOptions] = useState<VoiceOption[]>([]);
+  const [voiceCatalogState, setVoiceCatalogState] = useState<"loading" | "ready" | "error">("loading");
+  const [voiceCatalogMessage, setVoiceCatalogMessage] = useState("Loading ElevenLabs voices…");
+  const [voiceCatalogRevision, setVoiceCatalogRevision] = useState(0);
+  const [voiceSearch, setVoiceSearch] = useState("");
+  const [voiceRole, setVoiceRole] = useState<VoiceRole>("narrator");
+  const [voiceLimit, setVoiceLimit] = useState(12);
+  const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null);
+  const leadName = leadCharacterName(settings);
+  const rivalName = clean(settings.rival, "Rival");
+  const characters = useMemo(() => [leadName, rivalName], [leadName, rivalName]);
   const outputWords = useMemo(() => spokenWordCount(output), [output]);
   const outputMinutes = outputWords ? (outputWords / WORDS_PER_MINUTE).toFixed(1) : "0.0";
   const activeProviderConfig = aiSettings[aiSettings.provider];
   const draftProviderConfig = draftAISettings[draftAISettings.provider];
   const selectedRuntime = runtimeProfile(settings.runtimeMinutes);
+  const selectedVoiceIds = [
+    settings.narratorVoiceId,
+    settings.leadVoiceId,
+    settings.rivalVoiceId,
+  ]
+    .map((voiceId) => voiceId.trim())
+    .filter((voiceId, index, values) =>
+      PUBLIC_VOICE_LOOKUP_IDS.has(voiceId) && values.indexOf(voiceId) === index,
+    )
+    .slice(0, 3)
+    .join(",");
+  const voiceById = useMemo(
+    () => new Map(voiceOptions.map((voice) => [voice.voiceId, voice])),
+    [voiceOptions],
+  );
+  const filteredVoiceOptions = useMemo(() => {
+    const needle = voiceSearch.trim().toLowerCase();
+    if (!needle) return voiceOptions;
+    return voiceOptions.filter((voice) =>
+      [
+        voice.name,
+        voice.category,
+        voice.description,
+        ...Object.values(voice.labels),
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [voiceOptions, voiceSearch]);
   const remoteSocketRef = useRef<WebSocket | null>(null);
   const remoteRequestRef = useRef<string | null>(null);
   const remotePendingRef = useRef<PendingRemoteCommand | null>(null);
   const remoteAckTimerRef = useRef<number | null>(null);
   const remoteCompletionTimerRef = useRef<number | null>(null);
   const remoteReconnectAttemptRef = useRef(0);
+  const remoteInviteActiveRef = useRef(false);
+  const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
 
   const cancelPendingRemoteCommand = useCallback((message?: string) => {
     if (remoteAckTimerRef.current !== null) {
@@ -737,11 +939,28 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const inviteFragment = window.location.hash.startsWith(REMOTE_INVITE_PREFIX)
+      ? window.location.hash
+      : "";
+    let inviteFragmentRemoved = !inviteFragment;
+    if (inviteFragment) {
+      try {
+        window.history.replaceState(
+          window.history.state,
+          document.title,
+          `${window.location.pathname}${window.location.search}`,
+        );
+        inviteFragmentRemoved = true;
+      } catch {
+        inviteFragmentRemoved = false;
+      }
+    }
+
     const restore = window.setTimeout(() => {
       const embeddedBridge = window.parent !== window;
       setIsEmbeddedBridge(embeddedBridge);
-      let restoredMachineId = defaultRemoteReaperSettings.machineId;
-      let restoredMode: ReaperConnectionMode = "local";
+      let savedSettings = defaultRemoteReaperSettings;
+      let savedMode: ReaperConnectionMode = "local";
       try {
         const saved = localStorage.getItem(REMOTE_REAPER_STORAGE_KEY);
         if (saved) {
@@ -754,50 +973,173 @@ export default function Home() {
             machineId: String(parsed.settings?.machineId || defaultRemoteReaperSettings.machineId),
             pairingToken: String(parsed.settings?.pairingToken || ""),
           };
-          restoredMachineId = restored.machineId.trim();
-          restoredMode = parsed.mode === "remote" ? "remote" : "local";
-          setRemoteSettings(restored);
-          setDraftRemoteSettings(restored);
-          if (restoredMode === "remote") setReaperMode("remote");
+          savedSettings = restored;
+          savedMode = parsed.mode === "remote" ? "remote" : "local";
         }
       } catch {
         localStorage.removeItem(REMOTE_REAPER_STORAGE_KEY);
       }
-      if (embeddedBridge) return;
+
+      let pendingText = "";
+      let storedInvite = "";
       try {
-        const pendingText = sessionStorage.getItem(REMOTE_PENDING_STORAGE_KEY);
-        if (pendingText) {
-          const pending = JSON.parse(pendingText) as {
-            requestId?: string;
-            action?: string;
-            machineId?: string;
-            createdAt?: number;
-          };
-          const age = Date.now() - Number(pending.createdAt || 0);
-          const action = String(pending.action || "");
-          const machineId = String(pending.machineId || restoredMachineId).trim();
-          if (
-            /^[a-z0-9][a-z0-9_-]{7,127}$/i.test(String(pending.requestId || "")) &&
-            reaperActions.some((candidate) => candidate.id === action) &&
-            machineId === restoredMachineId &&
-            restoredMode === "remote" &&
-            age >= 0 &&
-            age < remoteCompletionLimit(action)
+        pendingText = sessionStorage.getItem(REMOTE_PENDING_STORAGE_KEY) || "";
+        storedInvite = sessionStorage.getItem(REMOTE_INVITE_SETTINGS_STORAGE_KEY) || "";
+      } catch {
+        pendingText = "";
+        storedInvite = "";
+      }
+
+      if (inviteFragment && !inviteFragmentRemoved) {
+        remoteInviteActiveRef.current = false;
+        setRemoteSettings(defaultRemoteReaperSettings);
+        setDraftRemoteSettings(defaultRemoteReaperSettings);
+        setReaperMode("remote");
+        setRemoteInviteState("invalid");
+        setRemoteInviteMessage(
+          "Invite Invalid — this browser could not remove the private credential from the address bar, so it was not used.",
+        );
+        setRemoteState("error");
+        setRemoteStateMessage("The private invite was not opened. Ask the host for a fresh link.");
+        setReaperStatus("Private REAPER invite rejected before connection.");
+        return;
+      }
+
+      if (embeddedBridge) {
+        remoteInviteActiveRef.current = false;
+        setRemoteSettings(savedSettings);
+        setDraftRemoteSettings(savedSettings);
+        setReaperMode("local");
+        if (inviteFragment) {
+          setRemoteInviteState("invalid");
+          setRemoteInviteMessage(
+            "Invite Invalid — private relay invites cannot be accepted inside an embedded REAPER bridge.",
+          );
+          setReaperStatus("The embedded REAPER Wi-Fi bridge has priority. Open private invites in a normal browser tab.");
+        }
+        return;
+      }
+
+      let selectedSettings = savedSettings;
+      let selectedMode = savedMode;
+      let selectedInvite: RemoteInviteResult = { status: "none" };
+      let inviteStatusLocked = false;
+
+      if (inviteFragment && pendingText) {
+        inviteStatusLocked = true;
+        setRemoteInviteState("invalid");
+        setRemoteInviteMessage(
+          "Invite Invalid — an unfinished REAPER command is being recovered first. Its connection was not replaced.",
+        );
+        setReaperStatus("The new invite was ignored because an unfinished remote command still needs recovery.");
+        if (storedInvite) {
+          selectedInvite = parseRemoteReaperInviteFragment(
+            `${REMOTE_INVITE_PREFIX}${storedInvite}`,
+          );
+        }
+      } else {
+        const candidate = inviteFragment || (
+          storedInvite ? `${REMOTE_INVITE_PREFIX}${storedInvite}` : ""
+        );
+        if (candidate) {
+          selectedInvite = parseRemoteReaperInviteFragment(candidate);
+          if (selectedInvite.status === "accepted" && inviteFragment) {
+            try {
+              sessionStorage.setItem(
+                REMOTE_INVITE_SETTINGS_STORAGE_KEY,
+                inviteFragment.slice(REMOTE_INVITE_PREFIX.length),
+              );
+            } catch {
+              selectedInvite = { status: "invalid" };
+              try {
+                sessionStorage.removeItem(REMOTE_INVITE_SETTINGS_STORAGE_KEY);
+              } catch {
+                // The invite is rejected when session-only storage is unavailable.
+              }
+            }
+          } else if (
+            selectedInvite.status === "expired" ||
+            selectedInvite.status === "invalid"
           ) {
-            const restoredPending: PendingRemoteCommand = {
-              requestId: String(pending.requestId),
-              action,
-              machineId,
-              createdAt: Number(pending.createdAt),
-            };
-            remoteRequestRef.current = restoredPending.requestId;
-            remotePendingRef.current = restoredPending;
-            setRunningReaperAction(restoredPending.action);
-            setReaperStatus("Recovering the unfinished remote REAPER command. Do not retry while its status is being checked.");
-            armRemoteCompletionTimer(restoredPending);
-          } else {
-            sessionStorage.removeItem(REMOTE_PENDING_STORAGE_KEY);
+            try {
+              sessionStorage.removeItem(REMOTE_INVITE_SETTINGS_STORAGE_KEY);
+            } catch {
+              // The rejected credential is never copied into persistent storage.
+            }
           }
+        }
+      }
+
+      if (selectedInvite.status === "accepted") {
+        selectedSettings = selectedInvite.settings;
+        selectedMode = "remote";
+        remoteInviteActiveRef.current = true;
+        if (!inviteStatusLocked) {
+          setRemoteInviteState("accepted");
+          setRemoteInviteMessage(
+            "Invite Accepted — connecting to the paired REAPER Mac. No connection details need to be typed.",
+          );
+          setReaperStatus("Private REAPER invite accepted. Connecting without running any REAPER action.");
+        }
+        setRemoteState("connecting");
+        setRemoteStateMessage("Private invite accepted. Connecting securely to the remote relay…");
+      } else {
+        remoteInviteActiveRef.current = false;
+        if (selectedInvite.status === "expired") {
+          selectedMode = "remote";
+          selectedSettings = defaultRemoteReaperSettings;
+          setRemoteInviteState("expired");
+          setRemoteInviteMessage("Invite Expired — ask the REAPER host to create a fresh private link.");
+          setRemoteState("disconnected");
+          setRemoteStateMessage("The private invite has expired and was not connected.");
+          setReaperStatus("Private REAPER invite expired. No REAPER action was run.");
+        } else if (selectedInvite.status === "invalid" && !inviteStatusLocked) {
+          selectedMode = "remote";
+          selectedSettings = defaultRemoteReaperSettings;
+          setRemoteInviteState("invalid");
+          setRemoteInviteMessage("Invite Invalid — ask the REAPER host to create a fresh private link.");
+          setRemoteState("error");
+          setRemoteStateMessage("The private invite could not be validated and was not connected.");
+          setReaperStatus("Private REAPER invite rejected. No REAPER action was run.");
+        }
+      }
+
+      setRemoteSettings(selectedSettings);
+      setDraftRemoteSettings(selectedSettings);
+      setReaperMode(selectedMode);
+
+      if (!pendingText) return;
+      try {
+        const pending = JSON.parse(pendingText) as {
+          requestId?: string;
+          action?: string;
+          machineId?: string;
+          createdAt?: number;
+        };
+        const age = Date.now() - Number(pending.createdAt || 0);
+        const action = String(pending.action || "");
+        const machineId = String(pending.machineId || selectedSettings.machineId).trim();
+        if (
+          /^[a-z0-9][a-z0-9_-]{7,127}$/i.test(String(pending.requestId || "")) &&
+          reaperActions.some((candidate) => candidate.id === action) &&
+          machineId === selectedSettings.machineId.trim() &&
+          selectedMode === "remote" &&
+          age >= 0 &&
+          age < remoteCompletionLimit(action)
+        ) {
+          const restoredPending: PendingRemoteCommand = {
+            requestId: String(pending.requestId),
+            action,
+            machineId,
+            createdAt: Number(pending.createdAt),
+          };
+          remoteRequestRef.current = restoredPending.requestId;
+          remotePendingRef.current = restoredPending;
+          setRunningReaperAction(restoredPending.action);
+          setReaperStatus("Recovering the unfinished remote REAPER command. Do not retry while its status is being checked.");
+          armRemoteCompletionTimer(restoredPending);
+        } else {
+          sessionStorage.removeItem(REMOTE_PENDING_STORAGE_KEY);
         }
       } catch {
         sessionStorage.removeItem(REMOTE_PENDING_STORAGE_KEY);
@@ -1019,6 +1361,10 @@ export default function Home() {
           musicCueCount: Number(parsed.musicCueCount) || runtimeProfile(restoredRuntime).defaultMusicCues,
           elevenModel: String(parsed.elevenModel || previous.elevenModel),
           performanceTaste: String(parsed.performanceTaste || previous.performanceTaste),
+          useMe: parsed.useMe === true,
+          yourName: String(parsed.yourName ?? previous.yourName),
+          lead: String(parsed.lead ?? previous.lead),
+          rival: String(parsed.rival ?? previous.rival),
           narratorVoiceId: String(parsed.narratorVoiceId ?? previous.narratorVoiceId),
           leadVoiceId: String(parsed.leadVoiceId ?? previous.leadVoiceId),
           rivalVoiceId: String(parsed.rivalVoiceId ?? previous.rivalVoiceId),
@@ -1030,14 +1376,109 @@ export default function Home() {
     return () => window.clearTimeout(restore);
   }, []);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const load = window.setTimeout(() => {
+      setVoiceCatalogState("loading");
+      setVoiceCatalogMessage("Loading ElevenLabs voice cards…");
+      const params = new URLSearchParams({ page_size: "100" });
+      if (selectedVoiceIds) params.set("voice_ids", selectedVoiceIds);
+      void fetch(`/api/elevenlabs/voices?${params.toString()}`, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then(async (response) => {
+          const data = await response.json() as {
+            voices?: VoiceOption[];
+            error?: string;
+          };
+          if (!response.ok) {
+            throw new Error(data.error || "ElevenLabs voice catalog is unavailable.");
+          }
+          const voices = Array.isArray(data.voices)
+            ? data.voices.filter((voice) =>
+                voice &&
+                typeof voice.voiceId === "string" &&
+                typeof voice.name === "string",
+              )
+            : [];
+          setVoiceOptions(voices);
+          setVoiceCatalogState("ready");
+          setVoiceCatalogMessage(
+            voices.length
+              ? `${voices.length} ElevenLabs voices ready. Choose a cast member, search, preview, then select.`
+              : "No ElevenLabs voices were returned.",
+          );
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          setVoiceCatalogState("error");
+          setVoiceCatalogMessage(
+            error instanceof Error
+              ? error.message
+              : "ElevenLabs voice catalog is unavailable.",
+          );
+        });
+    }, 0);
+    return () => {
+      window.clearTimeout(load);
+      controller.abort();
+    };
+  }, [selectedVoiceIds, voiceCatalogRevision]);
+
   function update<K extends keyof Settings>(key: K, value: Settings[K]) {
     setSettings((previous) => {
       const next = { ...previous, [key]: value };
-      if (["runtimeMinutes", "musicCueCount", "elevenModel", "performanceTaste", "narratorVoiceId", "leadVoiceId", "rivalVoiceId"].includes(key)) {
+      if (["runtimeMinutes", "musicCueCount", "elevenModel", "performanceTaste", "useMe", "yourName", "lead", "rival", "narratorVoiceId", "leadVoiceId", "rivalVoiceId"].includes(key)) {
         localStorage.setItem(VOICE_STORAGE_KEY, JSON.stringify(next));
       }
       return next;
     });
+  }
+
+  function voiceIdForRole(role: VoiceRole) {
+    if (role === "narrator") return settings.narratorVoiceId;
+    if (role === "lead") return settings.leadVoiceId;
+    return settings.rivalVoiceId;
+  }
+
+  function voiceLabelForRole(role: VoiceRole) {
+    if (role === "narrator") return "Narrator";
+    if (role === "lead") return leadName;
+    return rivalName;
+  }
+
+  function selectVoice(role: VoiceRole, voice: VoiceOption) {
+    if (role === "narrator") update("narratorVoiceId", voice.voiceId);
+    else if (role === "lead") update("leadVoiceId", voice.voiceId);
+    else update("rivalVoiceId", voice.voiceId);
+    setVoiceCatalogMessage(`${voice.name} selected for ${voiceLabelForRole(role)}.`);
+  }
+
+  async function toggleVoicePreview(voice: VoiceOption) {
+    const audio = voicePreviewRef.current;
+    if (!audio || !voice.previewUrl) {
+      setVoiceCatalogMessage(`No preview is available for ${voice.name}.`);
+      return;
+    }
+    if (previewingVoiceId === voice.voiceId && !audio.paused) {
+      audio.pause();
+      audio.currentTime = 0;
+      setPreviewingVoiceId(null);
+      return;
+    }
+    audio.pause();
+    audio.src = voice.previewUrl;
+    audio.currentTime = 0;
+    try {
+      await audio.play();
+      setPreviewingVoiceId(voice.voiceId);
+      setVoiceCatalogMessage(`Previewing ${voice.name}.`);
+    } catch {
+      setPreviewingVoiceId(null);
+      setVoiceCatalogMessage(`The preview for ${voice.name} could not be played in this browser.`);
+    }
   }
 
   function chooseRuntime(runtimeMinutes: RuntimeMinutes) {
@@ -1055,10 +1496,24 @@ export default function Home() {
   }
 
   function saveRemotePreference(mode: ReaperConnectionMode, nextSettings: RemoteReaperSettings) {
+    if (remoteInviteActiveRef.current) return;
     localStorage.setItem(REMOTE_REAPER_STORAGE_KEY, JSON.stringify({
       mode,
       settings: nextSettings,
     }));
+  }
+
+  function clearRemoteInviteSession() {
+    try {
+      sessionStorage.removeItem(REMOTE_INVITE_SETTINGS_STORAGE_KEY);
+    } catch {
+      // The in-memory credential is still cleared below.
+    }
+    remoteInviteActiveRef.current = false;
+    setRemoteInviteState("idle");
+    setRemoteInviteMessage(
+      "Guests only need the private invite link from the REAPER Mac. No relay address, machine ID, or token typing is required.",
+    );
   }
 
   function confirmPendingRemoteCancellation(change: string) {
@@ -1073,8 +1528,16 @@ export default function Home() {
     if (!confirmPendingRemoteCancellation("Changing the connection mode")) return;
     const hadPending = Boolean(remoteRequestRef.current);
     if (hadPending) cancelPendingRemoteCommand();
+    const hadInvite = remoteInviteActiveRef.current;
+    let nextSettings = remoteSettings;
+    if (hadInvite && mode === "local") {
+      clearRemoteInviteSession();
+      nextSettings = { ...remoteSettings, pairingToken: "" };
+      setRemoteSettings(nextSettings);
+      setDraftRemoteSettings(nextSettings);
+    }
     setReaperMode(mode);
-    saveRemotePreference(mode, remoteSettings);
+    if (!hadInvite) saveRemotePreference(mode, nextSettings);
     if (mode === "local") {
       setRemoteState("disconnected");
       setRemoteStateMessage("Internet Relay is disconnected. Local and Wi-Fi controls remain available.");
@@ -1106,14 +1569,16 @@ export default function Home() {
       setRemoteSettings(validated);
       setDraftRemoteSettings(validated);
       setReaperMode("remote");
-      saveRemotePreference("remote", validated);
+      if (!remoteInviteActiveRef.current) saveRemotePreference("remote", validated);
       setRemoteConnectRevision((revision) => revision + 1);
       setRemoteState("connecting");
       setRemoteStateMessage("Connecting securely to the remote relay…");
       setReaperStatus(
         hadPending
           ? "Connection settings changed while a command was unfinished. Its outcome is unknown; inspect REAPER before trying again."
-          : "Connecting to the remote REAPER computer…",
+          : remoteInviteActiveRef.current
+            ? "Connecting with a session-only private invite. No REAPER action was run."
+            : "Connecting to the remote REAPER computer…",
       );
     } catch (error) {
       setRemoteState("error");
@@ -1122,8 +1587,17 @@ export default function Home() {
   }
 
   function createNewPairingToken() {
-    updateDraftRemoteSetting("pairingToken", generatePairingToken());
-    setShowPairingToken(true);
+    const nextToken = generatePairingToken();
+    if (remoteInviteActiveRef.current) {
+      const cleared = { ...remoteSettings, pairingToken: "" };
+      clearRemoteInviteSession();
+      setRemoteSettings(cleared);
+      setDraftRemoteSettings({ ...cleared, pairingToken: nextToken });
+      setReaperMode("remote");
+      setRemoteState("disconnected");
+    } else {
+      updateDraftRemoteSetting("pairingToken", nextToken);
+    }
     setRemoteStateMessage("New pairing token created. Put the same token in the Mac companion.");
   }
 
@@ -1131,11 +1605,13 @@ export default function Home() {
     if (!confirmPendingRemoteCancellation("Removing the pairing token")) return;
     const hadPending = Boolean(remoteRequestRef.current);
     if (hadPending) cancelPendingRemoteCommand();
+    const hadInvite = remoteInviteActiveRef.current;
+    if (hadInvite) clearRemoteInviteSession();
     const cleared = { ...remoteSettings, pairingToken: "" };
     setRemoteSettings(cleared);
     setDraftRemoteSettings((previous) => ({ ...previous, pairingToken: "" }));
     setReaperMode("local");
-    saveRemotePreference("local", cleared);
+    if (!hadInvite) saveRemotePreference("local", cleared);
     setRemoteState("disconnected");
     setRemoteStateMessage("Pairing token removed from this browser.");
     setReaperStatus(
@@ -1146,6 +1622,12 @@ export default function Home() {
   }
 
   function downloadRemoteCompanionConfig() {
+    if (remoteInviteActiveRef.current) {
+      setRemoteStateMessage(
+        "Private invite credentials stay in this browser session and cannot be exported. Ask the Mac host for setup access.",
+      );
+      return;
+    }
     try {
       const validated = validateRemoteReaperSettings({
         ...draftRemoteSettings,
@@ -1395,7 +1877,9 @@ export default function Home() {
     }
     if (action.id === "build-play") {
       const approved = window.confirm(
-        "Build Immersive & Play will use the ElevenLabs account stored on the REAPER computer. Continue with paid voice generation?",
+        remoteInviteActiveRef.current
+          ? "Send this paid Build Immersive & Play request? The REAPER Mac owner must separately approve this exact request before ElevenLabs credits can be used."
+          : "Build Immersive & Play will use the ElevenLabs account stored on the REAPER computer. Continue with paid voice generation?",
       );
       if (!approved) {
         setReaperStatus("Remote build cancelled before using ElevenLabs credits.");
@@ -1567,9 +2051,13 @@ export default function Home() {
             </button>
           </div>
         </fieldset>
-        <div className="toggle-row"><div><strong>Make me the lead</strong><small>Use “You” as the main character</small></div><button aria-pressed={settings.useMe} className={`toggle ${settings.useMe ? "on" : ""}`} onClick={() => update("useMe", !settings.useMe)}><span /></button></div>
+        <div className="toggle-row"><div><strong>Make me the lead</strong><small>Use your own name as the main character</small></div><button aria-pressed={settings.useMe} className={`toggle ${settings.useMe ? "on" : ""}`} onClick={() => update("useMe", !settings.useMe)}><span /></button></div>
         <div className="field-grid">
-          <label>Main lead<input disabled={settings.useMe} value={settings.useMe ? "You" : settings.lead} onChange={(event) => update("lead", event.target.value)} /></label>
+          {settings.useMe ? (
+            <label>Your name<input value={settings.yourName} onChange={(event) => update("yourName", event.target.value)} placeholder="Type your name" autoComplete="name" /></label>
+          ) : (
+            <label>Main lead<input value={settings.lead} onChange={(event) => update("lead", event.target.value)} /></label>
+          )}
           <label>Second character<input value={settings.rival} onChange={(event) => update("rival", event.target.value)} /></label>
         </div>
         <fieldset><legend>Sound locations</legend><button className={settings.places === 1 ? "choice active" : "choice"} onClick={() => update("places", 1)}>One place</button><button className={settings.places === 2 ? "choice active" : "choice"} onClick={() => update("places", 2)}>Two places</button></fieldset>
@@ -1602,8 +2090,8 @@ export default function Home() {
         </div>
         <div className="voice-direction">
           <div className="voice-direction-head">
-            <div><span>ELEVENLABS PERFORMANCE</span><strong>Choose the audio model and voice cast</strong></div>
-            <small>The API key remains inside your REAPER ElevenLabs tool.</small>
+            <div><span>ELEVENLABS PERFORMANCE</span><strong>🎤 Choose voices by name and sound</strong></div>
+            <small>Voice metadata is loaded server-side. Paid speech generation still happens only on the REAPER Mac.</small>
           </div>
           <div className="voice-select-grid">
             <label>
@@ -1619,12 +2107,119 @@ export default function Home() {
               </select>
             </label>
           </div>
-          <div className="voice-id-grid">
-            <label>Narrator voice ID<input value={settings.narratorVoiceId} onChange={(event) => update("narratorVoiceId", event.target.value.trim())} placeholder="ElevenLabs voice ID" /></label>
-            <label>{settings.useMe ? "You" : clean(settings.lead, "Lead")} voice ID<input value={settings.leadVoiceId} onChange={(event) => update("leadVoiceId", event.target.value.trim())} placeholder="ElevenLabs voice ID" /></label>
-            <label>{clean(settings.rival, "Second character")} voice ID<input value={settings.rivalVoiceId} onChange={(event) => update("rivalVoiceId", event.target.value.trim())} placeholder="ElevenLabs voice ID" /></label>
+
+          <div className="voice-role-tabs" role="tablist" aria-label="Character receiving the selected voice">
+            {(["narrator", "lead", "rival"] as VoiceRole[]).map((role) => {
+              const voiceId = voiceIdForRole(role);
+              return (
+                <button
+                  key={role}
+                  type="button"
+                  role="tab"
+                  aria-selected={voiceRole === role}
+                  className={voiceRole === role ? "active" : ""}
+                  onClick={() => {
+                    setVoiceRole(role);
+                    setVoiceLimit(12);
+                  }}
+                >
+                  <strong>{voiceLabelForRole(role)}</strong>
+                  <small>{voiceById.get(voiceId)?.name || (voiceId ? "Saved REAPER voice" : "Choose a voice")}</small>
+                </button>
+              );
+            })}
           </div>
-          <p>Import creates <code>VO - Character-voiceID</code> text tracks. Generated speech remains on a separate <code>VO Audio - Character</code> track directly below.</p>
+
+          <div className="voice-browser-toolbar">
+            <label>
+              <span>🔍 Search voices</span>
+              <input
+                type="search"
+                value={voiceSearch}
+                onChange={(event) => {
+                  setVoiceSearch(event.target.value);
+                  setVoiceLimit(12);
+                }}
+                placeholder="Search by voice name, accent, age, or style"
+                autoComplete="off"
+              />
+            </label>
+            <p className={`voice-catalog-status ${voiceCatalogState}`} role="status">
+              {voiceCatalogMessage}
+              {voiceCatalogState === "error" && (
+                <button type="button" onClick={() => setVoiceCatalogRevision((value) => value + 1)}>
+                  Retry
+                </button>
+              )}
+            </p>
+          </div>
+
+          {voiceCatalogState === "ready" && (
+            <>
+              <div className="voice-card-grid">
+                {filteredVoiceOptions.slice(0, voiceLimit).map((voice) => {
+                  const selected = voiceIdForRole(voiceRole) === voice.voiceId;
+                  const labelEntries = Object.entries(voice.labels || {}).slice(0, 3);
+                  return (
+                    <article key={voice.voiceId} className={`voice-card ${selected ? "selected" : ""}`}>
+                      <button
+                        type="button"
+                        className="voice-card-select"
+                        aria-pressed={selected}
+                        onClick={() => selectVoice(voiceRole, voice)}
+                      >
+                        <span className="voice-avatar" aria-hidden="true">🎤</span>
+                        <span className="voice-card-copy">
+                          <strong>{voice.name}</strong>
+                          <small>{voice.category || "ElevenLabs voice"}</small>
+                        </span>
+                        <span className="voice-selected-mark" aria-hidden="true">{selected ? "✓" : "+"}</span>
+                      </button>
+                      {labelEntries.length > 0 && (
+                        <div className="voice-labels">
+                          {labelEntries.map(([key, value]) => <span key={`${voice.voiceId}-${key}`}>{value}</span>)}
+                        </div>
+                      )}
+                      {voice.description && <p>{voice.description}</p>}
+                      <button
+                        type="button"
+                        className="voice-preview"
+                        onClick={() => void toggleVoicePreview(voice)}
+                        disabled={!voice.previewUrl}
+                      >
+                        {previewingVoiceId === voice.voiceId ? "■ Stop preview" : voice.previewUrl ? "▶ Preview voice" : "Preview unavailable"}
+                      </button>
+                    </article>
+                  );
+                })}
+              </div>
+              {filteredVoiceOptions.length === 0 && (
+                <div className="voice-empty">No voices match “{voiceSearch.trim()}”. Try a name, accent, or style.</div>
+              )}
+              {filteredVoiceOptions.length > voiceLimit && (
+                <button type="button" className="voice-show-more" onClick={() => setVoiceLimit((value) => value + 12)}>
+                  Show 12 more voices
+                </button>
+              )}
+            </>
+          )}
+
+          <audio
+            ref={voicePreviewRef}
+            preload="none"
+            onEnded={() => setPreviewingVoiceId(null)}
+            onError={() => setPreviewingVoiceId(null)}
+          />
+
+          <details className="voice-manual-ids">
+            <summary>Advanced: enter a voice ID manually</summary>
+            <div className="voice-id-grid">
+              <label>Narrator voice ID<input value={settings.narratorVoiceId} onChange={(event) => update("narratorVoiceId", event.target.value.trim())} placeholder="ElevenLabs voice ID" /></label>
+              <label>{leadName} voice ID<input value={settings.leadVoiceId} onChange={(event) => update("leadVoiceId", event.target.value.trim())} placeholder="ElevenLabs voice ID" /></label>
+              <label>{rivalName} voice ID<input value={settings.rivalVoiceId} onChange={(event) => update("rivalVoiceId", event.target.value.trim())} placeholder="ElevenLabs voice ID" /></label>
+            </div>
+          </details>
+          <p>Import still writes the selected ID into <code>VO - Character-voiceID</code> behind the scenes. Generated speech remains on a separate <code>VO Audio - Character</code> track directly below.</p>
         </div>
         <div className="cast"><span>CAST</span>{characters.map((name) => <b key={name}>{name}</b>)}<i>Narrator</i></div>
         <button className="generate" onClick={generate} disabled={generating}>{generating ? `Generating ${selectedRuntime.shortLabel}…` : `Generate ${selectedRuntime.label}`} <span>→</span></button>
@@ -1711,73 +2306,120 @@ export default function Home() {
             </div>
           ) : reaperMode === "remote" ? (
             <div className="remote-reaper-form">
-              <div className="remote-route" aria-label="Remote REAPER connection route">
-                <span>Online Studio</span>
-                <b aria-hidden="true">→</b>
-                <span>Secure WSS Relay</span>
-                <b aria-hidden="true">→</b>
-                <span>Node Companion on Mac</span>
-                <b aria-hidden="true">→</b>
-                <span>REAPER</span>
+              <div
+                className={`remote-invite-card ${remoteInviteState}`}
+                role="status"
+                aria-live="polite"
+              >
+                <span className="remote-invite-kicker">PRIVATE REAPER INVITE</span>
+                <strong>
+                  {remoteInviteState === "accepted"
+                    ? "Invite Accepted"
+                    : remoteInviteState === "expired"
+                      ? "Invite Expired"
+                      : remoteInviteState === "invalid"
+                        ? "Invite Invalid"
+                        : "Guests: open the private link"}
+                </strong>
+                <p>{remoteInviteMessage}</p>
+                <small>
+                  A private invite is a replayable bearer link until it expires or the Mac launcher
+                  stops. Do not forward it. Every paid voice build requires separate approval for
+                  that exact request on the REAPER Mac.
+                </small>
               </div>
-              <div className="remote-fields">
-                <label>
-                  Secure relay URL
-                  <input
-                    value={draftRemoteSettings.relayUrl}
-                    onChange={(event) => updateDraftRemoteSetting("relayUrl", event.target.value)}
-                    placeholder="wss://your-relay.example.com"
-                    inputMode="url"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    maxLength={2048}
-                  />
-                </label>
-                <label>
-                  REAPER machine ID
-                  <input
-                    value={draftRemoteSettings.machineId}
-                    onChange={(event) => updateDraftRemoteSetting("machineId", event.target.value)}
-                    placeholder="sruthin-studio"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    maxLength={64}
-                  />
-                </label>
-                <label>
-                  Pairing token
-                  <div className="secret-field">
-                    <input
-                      type={showPairingToken ? "text" : "password"}
-                      value={draftRemoteSettings.pairingToken}
-                      onChange={(event) => updateDraftRemoteSetting("pairingToken", event.target.value)}
-                      placeholder="Same private token as the Mac companion"
-                      autoComplete="off"
-                      autoCapitalize="none"
-                      spellCheck={false}
-                      maxLength={256}
-                    />
-                    <button type="button" onClick={() => setShowPairingToken((visible) => !visible)}>
-                      {showPairingToken ? "Hide" : "Show"}
-                    </button>
+
+              {remoteInviteState === "idle" && (
+                <div className="remote-host-setup">
+                  <div>
+                    <span>ON THE REAPER MAC</span>
+                    <strong>Create the private guest link</strong>
+                    <p>
+                      Unzip the package, double-click <code>Start Remote REAPER Demo.command</code>,
+                      then send the complete link copied to the Mac clipboard.
+                    </p>
                   </div>
-                </label>
-              </div>
-              <div className="remote-connection-footer">
-                <div className={`remote-presence ${remoteState}`}>
-                  <span className={`connection-dot ${remoteState === "online" ? "online" : ""}`} />
-                  <div><strong>{remoteState === "online" ? "Remote REAPER Online" : "Remote connection"}</strong><small>{remoteStateMessage}</small></div>
+                  <a href="/story-cue-reaper-remote.zip" download>
+                    Download Mac demo package
+                    <small>Node.js + cloudflared required once</small>
+                  </a>
                 </div>
-                <div className="remote-buttons">
-                  <button type="button" className="token-button" onClick={createNewPairingToken}>New token</button>
-                  {remoteSettings.pairingToken && <button type="button" className="token-button danger" onClick={removeRemotePairingToken}>Remove token</button>}
-                  <button type="button" className="token-button" onClick={downloadRemoteCompanionConfig}>Download config</button>
-                  <button type="button" className="connect-button" onClick={saveAndConnectRemote}>Save &amp; Connect</button>
+              )}
+
+              <div className={`remote-presence invite-presence ${remoteState}`}>
+                <span className={`connection-dot ${remoteState === "online" ? "online" : ""}`} />
+                <div>
+                  <strong>{remoteState === "online" ? "Remote REAPER Online" : "Remote connection"}</strong>
+                  <small>{remoteStateMessage}</small>
                 </div>
               </div>
-              <a className="download-companion" href="/story-cue-reaper-remote.zip" download>Download the Node.js Mac companion package →</a>
-              <p className="remote-safety">Safety requirement: open a separate saved storyboard project and run <code>Enable Story Cue Studio Remote Target.lua</code>. The companion will refuse the master cue project.</p>
-              <p className="remote-privacy">The pairing token is saved on this browser until you remove it, sent only during secure WSS pairing, and included when you download the Mac configuration. ElevenLabs credentials and generated audio remain on the REAPER Mac.</p>
+
+              <details className="remote-manual">
+                <summary>
+                  Advanced / manual connection
+                  <span>Host setup and fallback controls</span>
+                </summary>
+                <div className="remote-manual-body">
+                  <div className="remote-route" aria-label="Remote REAPER connection route">
+                    <span>Online Studio</span>
+                    <b aria-hidden="true">→</b>
+                    <span>Secure WSS Relay</span>
+                    <b aria-hidden="true">→</b>
+                    <span>Node Companion on Mac</span>
+                    <b aria-hidden="true">→</b>
+                    <span>REAPER</span>
+                  </div>
+                  <div className="remote-fields">
+                    <label>
+                      Secure relay URL
+                      <input
+                        value={draftRemoteSettings.relayUrl}
+                        onChange={(event) => updateDraftRemoteSetting("relayUrl", event.target.value)}
+                        placeholder="wss://your-relay.example.com"
+                        inputMode="url"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        maxLength={2048}
+                      />
+                    </label>
+                    <label>
+                      REAPER machine ID
+                      <input
+                        value={draftRemoteSettings.machineId}
+                        onChange={(event) => updateDraftRemoteSetting("machineId", event.target.value)}
+                        placeholder="sruthin-studio"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        maxLength={64}
+                      />
+                    </label>
+                    <label>
+                      Pairing token
+                      <input
+                        type="password"
+                        value={draftRemoteSettings.pairingToken}
+                        onChange={(event) => updateDraftRemoteSetting("pairingToken", event.target.value)}
+                        placeholder="Same private token as the Mac companion"
+                        autoComplete="new-password"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        maxLength={256}
+                      />
+                    </label>
+                  </div>
+                  <div className="remote-connection-footer">
+                    <div className="remote-buttons">
+                      <button type="button" className="token-button" onClick={createNewPairingToken}>New token</button>
+                      {remoteSettings.pairingToken && <button type="button" className="token-button danger" onClick={removeRemotePairingToken}>Remove token</button>}
+                      <button type="button" className="token-button" onClick={downloadRemoteCompanionConfig}>Download config</button>
+                      <button type="button" className="connect-button" onClick={saveAndConnectRemote}>Save &amp; Connect</button>
+                    </div>
+                  </div>
+                  <a className="download-companion" href="/story-cue-reaper-remote.zip" download>Download the Node.js Mac companion package →</a>
+                  <p className="remote-safety">Safety requirement: open a separate saved storyboard project and run <code>Enable Story Cue Studio Remote Target.lua</code>. The companion will refuse the master cue project.</p>
+                  <p className="remote-privacy">Manual pairing tokens are saved on this browser until removed. Private invite credentials stay in session storage only and are removed from the address bar before connection. ElevenLabs credentials and generated audio remain on the REAPER Mac.</p>
+                </div>
+              </details>
             </div>
           ) : (
             <div className="local-connection-summary">

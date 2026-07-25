@@ -55,6 +55,7 @@ export async function startRelay({
   host = process.env.HOST || "127.0.0.1",
   allowedOrigins = DEFAULT_ALLOWED_ORIGINS,
   logger = console,
+  now = Date.now,
 } = {}) {
   const rooms = new Map();
   const server = http.createServer((request, response) => {
@@ -84,6 +85,7 @@ export async function startRelay({
         reaperOnline: false,
         readinessMessage: "Waiting for the REAPER Mac companion.",
         jobs: new Map(),
+        inviteAcceptUntil: 0,
       };
       rooms.set(pair.machineId, room);
     }
@@ -101,6 +103,12 @@ export async function startRelay({
       message: room.readinessMessage,
     };
     for (const controller of room.controllers) safeSend(controller, payload);
+  }
+
+  function requireActiveInvite(room) {
+    if (room.inviteAcceptUntil && now() >= room.inviteAcceptUntil) {
+      throw new Error("This one-click REAPER invite has expired. Start a new demo on the Mac.");
+    }
   }
 
   function broadcastCommandStatus(room, payload) {
@@ -121,7 +129,7 @@ export async function startRelay({
       try {
         const message = parseJsonMessage(raw);
         if (!peer) {
-          const pair = validatePairMessage(message);
+          const pair = validatePairMessage(message, now());
           if (
             pair.role === "controller" &&
             allowedOrigins &&
@@ -130,6 +138,17 @@ export async function startRelay({
             throw new Error("This website origin is not allowed by the relay.");
           }
           const room = roomFor(pair);
+          if (pair.role === "controller") {
+            requireActiveInvite(room);
+          } else if (room.inviteAcceptUntil) {
+            requireActiveInvite(room);
+            if (pair.inviteAcceptUntil !== room.inviteAcceptUntil) {
+              throw new Error("A one-click REAPER invite deadline cannot be changed.");
+            }
+            if (room.companion && room.companion !== socket) {
+              throw new Error("The one-click REAPER companion is already connected.");
+            }
+          }
           peer = { role: pair.role, machineId: pair.machineId, room };
           clearTimeout(pairTimeout);
           if (pair.role === "companion") {
@@ -137,6 +156,7 @@ export async function startRelay({
               room.companion.close(4002, "A newer companion connected");
             }
             room.companion = socket;
+            room.inviteAcceptUntil = pair.inviteAcceptUntil;
             room.reaperOnline = pair.reaperOnline;
             room.readinessMessage = pair.readinessMessage || (
               pair.reaperOnline ? "Remote REAPER is ready." : "REAPER is not ready."
@@ -158,7 +178,8 @@ export async function startRelay({
 
         if (message.type === "command") {
           if (peer.role !== "controller") throw new Error("Only the website can submit commands.");
-          const command = validateCommandMessage(message, peer.machineId);
+          requireActiveInvite(peer.room);
+          const command = validateCommandMessage(message, peer.machineId, now());
           if (!peer.room.companion || peer.room.companion.readyState !== WebSocket.OPEN) {
             throw new Error("The REAPER Mac companion is offline.");
           }
@@ -189,7 +210,7 @@ export async function startRelay({
           peer.room.jobs.set(command.requestId, {
             digest: command.commandSha256,
             status: accepted,
-            updatedAt: Date.now(),
+            updatedAt: now(),
           });
           safeSend(peer.room.companion, command);
           safeSend(socket, accepted);
@@ -202,7 +223,7 @@ export async function startRelay({
           const job = peer.room.jobs.get(status.requestId);
           if (!job) throw new Error("Status refers to an unknown command.");
           job.status = status;
-          job.updatedAt = Date.now();
+          job.updatedAt = now();
           broadcastCommandStatus(peer.room, status);
           return;
         }
@@ -211,7 +232,7 @@ export async function startRelay({
           if (peer.role !== "controller") throw new Error("Only the website can query command status.");
           const query = validateStatusQuery(message, peer.machineId);
           const job = peer.room.jobs.get(query.requestId);
-          if (!job || job.updatedAt < Date.now() - JOB_STATUS_TTL_MS) {
+          if (!job || job.updatedAt < now() - JOB_STATUS_TTL_MS) {
             if (job) peer.room.jobs.delete(query.requestId);
             throw new Error("No cached command status exists for this request ID; it is unknown or expired.");
           }
@@ -267,7 +288,7 @@ export async function startRelay({
       socket.isAlive = false;
       socket.ping();
     }
-    const cutoff = Date.now() - JOB_STATUS_TTL_MS;
+    const cutoff = now() - JOB_STATUS_TTL_MS;
     for (const [machineId, room] of rooms) {
       for (const [requestId, job] of room.jobs) {
         if (job.updatedAt < cutoff) room.jobs.delete(requestId);

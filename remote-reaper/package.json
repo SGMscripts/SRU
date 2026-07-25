@@ -9,7 +9,7 @@
   "scripts": {
     "relay": "node --env-file-if-exists=.env relay.mjs",
     "companion": "node --env-file-if-exists=.env companion.mjs",
-    "demo": "node --env-file=.env demo.mjs",
+    "demo": "node --env-file-if-exists=.env demo.mjs",
     "journal:status": "node --env-file-if-exists=.env companion.mjs --journal-status",
     "clear-safety-lock": "node --env-file-if-exists=.env companion.mjs --clear-safety-lock",
     "allow-repeat-build": "node --env-file-if-exists=.env companion.mjs --allow-repeat-build",

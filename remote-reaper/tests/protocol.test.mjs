@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   commandHash,
+  MAX_INVITE_ACCEPT_WINDOW_MS,
   MAX_SCRIPT_BYTES,
   scriptHash,
   tokenHash,
@@ -74,6 +75,7 @@ test("rejects expired, malformed, and oversized storyboard commands", () => {
 });
 
 test("pairing uses a private token hash and never accepts a short token", () => {
+  const now = 1_800_000_000_000;
   const pair = validatePairMessage({
     type: "pair",
     version: 1,
@@ -81,11 +83,41 @@ test("pairing uses a private token hash and never accepts a short token", () => 
     machineId: "sruthin-studio",
     token: "0123456789abcdef0123456789abcdef",
     reaperOnline: true,
-  });
+  }, now);
   assert.equal(pair.role, "companion");
+  assert.equal(pair.inviteAcceptUntil, 0);
   assert.equal(tokenHash(pair.token).length, 64);
   assert.throws(() => validatePairMessage({
     ...pair,
     token: "short",
   }), /16–256/);
+});
+
+test("only companions can set a bounded future invite acceptance deadline", () => {
+  const now = 1_800_000_000_000;
+  const base = {
+    type: "pair",
+    version: 1,
+    role: "companion",
+    machineId: "reaper-demo-0011223344556677",
+    token: "0123456789abcdef0123456789abcdef01234567890",
+    inviteAcceptUntil: now + 50 * 60 * 1000,
+  };
+  const pair = validatePairMessage(base, now);
+  assert.equal(pair.inviteAcceptUntil, base.inviteAcceptUntil);
+  assert.throws(
+    () => validatePairMessage({ ...base, inviteAcceptUntil: now }, now),
+    /expired/i,
+  );
+  assert.throws(
+    () => validatePairMessage({
+      ...base,
+      inviteAcceptUntil: now + MAX_INVITE_ACCEPT_WINDOW_MS + 1,
+    }, now),
+    /90 minutes/i,
+  );
+  assert.throws(
+    () => validatePairMessage({ ...base, role: "controller" }, now),
+    /only the Mac companion/i,
+  );
 });

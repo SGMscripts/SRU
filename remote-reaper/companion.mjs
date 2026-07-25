@@ -5,7 +5,11 @@ import {
   FileJobJournal,
   SafetyLockError,
 } from "./journal.mjs";
-import { PROTOCOL_VERSION, validateCommandMessage } from "./protocol.mjs";
+import {
+  MAX_INVITE_ACCEPT_WINDOW_MS,
+  PROTOCOL_VERSION,
+  validateCommandMessage,
+} from "./protocol.mjs";
 import { ReaperWebControl } from "./reaper-web-control.mjs";
 
 function requiredToken(value) {
@@ -34,6 +38,63 @@ function booleanSetting(value) {
   return /^(?:1|true|yes|on)$/i.test(String(value || ""));
 }
 
+function optionalInviteAcceptUntil(value, now = Date.now()) {
+  if (value === undefined || value === null || value === "") return 0;
+  const deadline = Number(value);
+  if (
+    !Number.isSafeInteger(deadline) ||
+    deadline <= now ||
+    deadline - now > MAX_INVITE_ACCEPT_WINDOW_MS
+  ) {
+    throw new Error("Invite acceptance deadline must be within the next 90 minutes.");
+  }
+  return deadline;
+}
+
+function episodeTitle(script) {
+  const firstLine = String(script || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return firstLine || "Untitled storyboard";
+}
+
+function localApprovalFailure(decision) {
+  if (decision?.reason === "cooldown") {
+    return {
+      stage: "local-approval-cooldown",
+      message: "The REAPER Mac is briefly pausing new approval dialogs after a recent denial or failure. Wait 25 seconds, then send a new build request.",
+    };
+  }
+  if (decision?.reason === "timeout") {
+    return {
+      stage: "local-approval-timeout",
+      message: "No one approved this build on the REAPER Mac within 45 seconds. Nothing was changed and no voice credits were used.",
+    };
+  }
+  if (decision?.reason === "denied") {
+    return {
+      stage: "local-approval-denied",
+      message: "The REAPER Mac owner denied this build. Nothing was changed and no voice credits were used.",
+    };
+  }
+  return {
+    stage: "local-approval-unavailable",
+    message: "The REAPER Mac could not show or verify its local approval dialog. The build was denied without changing REAPER or using voice credits.",
+  };
+}
+
+function exactApprovalMatches(decision, context) {
+  const binding = decision?.binding;
+  return (
+    decision?.approved === true &&
+    binding?.requestId === context.requestId &&
+    binding?.commandSha256 === context.commandSha256 &&
+    binding?.scriptSha256 === context.scriptSha256 &&
+    binding?.expiresAt === context.expiresAt
+  );
+}
+
 export function createCompanion({
   relayUrl = process.env.REAPER_RELAY_URL || "ws://127.0.0.1:8787",
   machineId = process.env.REAPER_MACHINE_ID || "sruthin-studio",
@@ -41,16 +102,22 @@ export function createCompanion({
   reaperBaseUrl = process.env.REAPER_BASE_URL || "http://127.0.0.1:8089",
   cueAssetPath = process.env.CUE_ASSET_PATH || "/Volumes/Extreme SSD/pocket fm/france/tool test/ai mastering training/ai mastering training.RPP",
   allowPaidVoiceGeneration = booleanSetting(process.env.ALLOW_PAID_VOICE_GENERATION),
+  approvePaidBuild = null,
+  inviteAcceptUntil,
   logger = console,
   reaper = new ReaperWebControl({ baseUrl: reaperBaseUrl, assetPath: cueAssetPath }),
   journal = new FileJobJournal({
     filePath: process.env.REAPER_JOB_JOURNAL_PATH || defaultJournalPath(),
   }),
 } = {}) {
+  if (approvePaidBuild !== null && typeof approvePaidBuild !== "function") {
+    throw new Error("approvePaidBuild must be a function when local approval is enabled.");
+  }
   const config = {
     relayUrl: validRelayUrl(relayUrl),
     machineId: String(machineId),
     pairingToken: requiredToken(pairingToken),
+    inviteAcceptUntil: optionalInviteAcceptUntil(inviteAcceptUntil),
   };
   if (!/^[a-z0-9][a-z0-9_-]{2,63}$/i.test(config.machineId)) {
     throw new Error("REAPER_MACHINE_ID must contain 3–64 letters, numbers, underscores, or dashes.");
@@ -163,6 +230,69 @@ export function createCompanion({
     let journalStarted = false;
     busy = true;
     try {
+      if (command.action === "build-play" && approvePaidBuild) {
+        sendStatus(command.requestId, {
+          state: "progress",
+          stage: "awaiting-local-approval",
+          message: "Waiting for the REAPER Mac owner to approve this exact build.",
+          done: false,
+          error: false,
+        });
+
+        const approvalContext = {
+          title: episodeTitle(command.script),
+          runtimeMinutes: command.runtimeMinutes,
+          requestId: command.requestId,
+          commandSha256: command.commandSha256,
+          scriptSha256: command.scriptSha256,
+          expiresAt: command.expiresAt,
+        };
+        let decision;
+        try {
+          decision = await approvePaidBuild(approvalContext);
+        } catch {
+          decision = { approved: false, reason: "unavailable" };
+        }
+
+        if (!exactApprovalMatches(decision, approvalContext)) {
+          const failure = localApprovalFailure(
+            decision?.approved === true
+              ? { approved: false, reason: "binding-mismatch" }
+              : decision,
+          );
+          const status = {
+            state: "error",
+            ...failure,
+            done: true,
+            error: true,
+          };
+          completed.set(command.requestId, status);
+          sendStatus(command.requestId, status);
+          return;
+        }
+
+        if (Date.now() > command.expiresAt) {
+          const status = {
+            state: "error",
+            stage: "command-expired-after-approval",
+            message: "The remote build request expired while awaiting approval. Nothing was changed and no voice credits were used.",
+            done: true,
+            error: true,
+          };
+          completed.set(command.requestId, status);
+          sendStatus(command.requestId, status);
+          return;
+        }
+
+        sendStatus(command.requestId, {
+          state: "progress",
+          stage: "local-approval-granted",
+          message: "The REAPER Mac owner approved this exact build.",
+          done: false,
+          error: false,
+        });
+      }
+
       await journal.begin(command);
       journalStarted = true;
       sendStatus(command.requestId, {
@@ -242,6 +372,9 @@ export function createCompanion({
         role: "companion",
         machineId: config.machineId,
         token: config.pairingToken,
+        ...(config.inviteAcceptUntil
+          ? { inviteAcceptUntil: config.inviteAcceptUntil }
+          : {}),
         reaperOnline: readiness.reaperOnline,
         readinessMessage: readiness.message,
       });
@@ -287,6 +420,8 @@ export function createCompanion({
       machineId: config.machineId,
       reaperBaseUrl,
       allowPaidVoiceGeneration,
+      requiresPaidBuildApproval: Boolean(approvePaidBuild),
+      inviteAcceptUntil: config.inviteAcceptUntil,
       journalPath: journal.filePath || "",
     },
     async start() {

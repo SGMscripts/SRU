@@ -382,3 +382,143 @@ test("rejects a controller using the wrong pairing token", async (context) => {
   const error = await nextMessage(controller, (message) => message.type === "error");
   assert.match(error.message, /does not match/i);
 });
+
+test("enforces the companion invite deadline for new controllers and commands", async (context) => {
+  let clock = 1_800_000_000_000;
+  const relay = await startRelay({
+    port: 0,
+    allowedOrigins: null,
+    logger: { info() {} },
+    now: () => clock,
+  });
+  context.after(async () => relay.close());
+  const url = `ws://127.0.0.1:${relay.port}`;
+  const token = "0123456789abcdef0123456789abcdef01234567890";
+  const machineId = "reaper-demo-0011223344556677";
+  const companion = await openSocket(url);
+  context.after(() => companion.close());
+  companion.send(JSON.stringify({
+    type: "pair",
+    version: 1,
+    role: "companion",
+    machineId,
+    token,
+    inviteAcceptUntil: clock + 30_000,
+    reaperOnline: true,
+  }));
+  await nextMessage(companion, (message) => message.type === "paired");
+
+  const deadlineChanger = await openSocket(url);
+  context.after(() => deadlineChanger.close());
+  deadlineChanger.send(JSON.stringify({
+    type: "pair",
+    version: 1,
+    role: "companion",
+    machineId,
+    token,
+    inviteAcceptUntil: clock + 45_000,
+    reaperOnline: true,
+  }));
+  const deadlineChangeError = await nextMessage(
+    deadlineChanger,
+    (message) => message.type === "error",
+  );
+  assert.match(deadlineChangeError.message, /deadline cannot be changed/i);
+
+  const controller = await openSocket(url);
+  context.after(() => controller.close());
+  controller.send(JSON.stringify({
+    type: "pair",
+    version: 1,
+    role: "controller",
+    machineId,
+    token,
+  }));
+  await nextMessage(controller, (message) => message.type === "paired");
+
+  const firstRequestId = "invite-job-0001";
+  const forwardedPromise = nextMessage(
+    companion,
+    (message) => message.type === "command" && message.requestId === firstRequestId,
+  );
+  const acceptedPromise = nextMessage(
+    controller,
+    (message) => message.type === "command_status" && message.requestId === firstRequestId,
+  );
+  controller.send(JSON.stringify({
+    type: "command",
+    version: 1,
+    requestId: firstRequestId,
+    machineId,
+    action: "cue-recall",
+    script: "",
+    runtimeMinutes: 3,
+    createdAt: clock,
+    expiresAt: clock + 60_000,
+  }));
+  await Promise.all([forwardedPromise, acceptedPromise]);
+
+  clock += 31_000;
+  const progressPromise = nextMessage(
+    controller,
+    (message) => message.type === "command_status" && message.state === "progress",
+  );
+  companion.send(JSON.stringify({
+    type: "command_status",
+    version: 1,
+    requestId: firstRequestId,
+    state: "progress",
+    stage: "recalling",
+    message: "Accepted work is still running.",
+    seq: 2,
+  }));
+  const progress = await progressPromise;
+  assert.equal(progress.stage, "recalling");
+
+  const statusQueryPromise = nextMessage(
+    controller,
+    (message) => message.type === "command_status" && message.requestId === firstRequestId,
+  );
+  controller.send(JSON.stringify({
+    type: "status_query",
+    version: 1,
+    machineId,
+    requestId: firstRequestId,
+  }));
+  const cachedProgress = await statusQueryPromise;
+  assert.equal(cachedProgress.stage, "recalling");
+
+  const expiredCommandId = "invite-job-0002";
+  const expiredCommandPromise = nextMessage(
+    controller,
+    (message) => message.type === "error" && message.requestId === expiredCommandId,
+  );
+  controller.send(JSON.stringify({
+    type: "command",
+    version: 1,
+    requestId: expiredCommandId,
+    machineId,
+    action: "cue-recall",
+    script: "",
+    runtimeMinutes: 3,
+    createdAt: clock,
+    expiresAt: clock + 60_000,
+  }));
+  const expiredCommand = await expiredCommandPromise;
+  assert.match(expiredCommand.message, /invite has expired/i);
+
+  const lateController = await openSocket(url);
+  context.after(() => lateController.close());
+  lateController.send(JSON.stringify({
+    type: "pair",
+    version: 1,
+    role: "controller",
+    machineId,
+    token,
+  }));
+  const expiredPairing = await nextMessage(
+    lateController,
+    (message) => message.type === "error",
+  );
+  assert.match(expiredPairing.message, /invite has expired/i);
+});

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import vm from "node:vm";
+import ts from "typescript";
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -23,6 +25,41 @@ async function render() {
   );
 }
 
+function compileInviteParser(page) {
+  const helperStart = page.indexOf("function normalizeRelayUrl");
+  const helperEnd = page.indexOf("function generatePairingToken");
+  assert.ok(helperStart >= 0 && helperEnd > helperStart, "invite helper source must be extractable");
+  const source = `
+    const REMOTE_PROTOCOL_VERSION = 1;
+    const REMOTE_INVITE_PREFIX = "#reaper-invite=";
+    const REMOTE_INVITE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+    const REMOTE_INVITE_MAX_LIFETIME_MS = 90 * 60 * 1000;
+    const REMOTE_INVITE_CLOCK_SKEW_MS = 5 * 60 * 1000;
+    ${page.slice(helperStart, helperEnd)}
+    globalThis.parseInvite = parseRemoteReaperInviteFragment;
+  `;
+  const javascript = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.None,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const context = vm.createContext({
+    URL,
+    TextDecoder,
+    TextEncoder,
+    Uint8Array,
+    atob,
+    btoa,
+  });
+  vm.runInContext(javascript, context);
+  return context.parseInvite;
+}
+
+function inviteFragment(payload) {
+  return `#reaper-invite=${Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")}`;
+}
+
 test("server-renders the Story Cue Studio demo controls", async () => {
   const response = await render();
   assert.equal(response.status, 200);
@@ -43,6 +80,9 @@ test("server-renders the Story Cue Studio demo controls", async () => {
   assert.match(html, /Local \/ Wi-Fi/);
   assert.match(html, /Internet Relay/);
   assert.match(html, /Node companion · different networks/);
+  assert.match(html, /Make me the lead/);
+  assert.match(html, /Search voices/);
+  assert.match(html, /Advanced: enter a voice ID manually/);
 });
 
 test("wires runtime selection and the same strict cue-bank policy into local and API generation", async () => {
@@ -71,6 +111,47 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(page, /sessionStorage\.setItem/);
   assert.match(page, /type:\s*"status_query"/);
   assert.match(page, /story-cue-reaper-remote\.zip/);
+  assert.match(page, /settings\.yourName/);
+  assert.match(page, /Your name/);
+  assert.match(page, /PUBLIC_VOICE_LOOKUP_IDS/);
+  assert.match(page, /\/api\/elevenlabs\/voices/);
+  assert.match(page, /Search voices/);
+  assert.match(page, /Preview voice/);
+  assert.match(page, /Advanced: enter a voice ID manually/);
+  assert.match(page, /REMOTE_INVITE_PREFIX\s*=\s*"#reaper-invite="/);
+  assert.match(page, /REMOTE_INVITE_MAX_LIFETIME_MS\s*=\s*90\s*\*\s*60\s*\*\s*1000/);
+  assert.match(page, /parseRemoteReaperInviteFragment/);
+  assert.match(page, /window\.history\.replaceState/);
+  assert.match(page, /sessionStorage\.setItem\(\s*REMOTE_INVITE_SETTINGS_STORAGE_KEY/);
+  assert.doesNotMatch(page, /localStorage\.(?:getItem|setItem)\(\s*REMOTE_INVITE_SETTINGS_STORAGE_KEY/);
+  assert.match(page, /if \(inviteFragment && pendingText\)/);
+  assert.match(page, /private relay invites cannot be accepted inside an embedded REAPER bridge/);
+  assert.match(page, /Connecting without running any REAPER action/);
+  assert.match(page, /Invite Accepted/);
+  assert.match(page, /Invite Expired/);
+  assert.match(page, /Invite Invalid/);
+  assert.match(page, /Create the private guest link/);
+  assert.match(page, /Download Mac demo package/);
+  assert.match(page, /Start Remote REAPER Demo\.command/);
+  assert.match(page, /Advanced \/ manual connection/);
+  assert.match(page, /replayable bearer link until it expires or the Mac launcher/);
+  assert.match(page, /separately approve this exact request before ElevenLabs credits/);
+  assert.match(page, /Every paid voice build requires separate approval/);
+  assert.doesNotMatch(page, /setShowPairingToken/);
+  assert.doesNotMatch(page, /type=\{showPairingToken/);
+  assert.match(page, /type="password"\s+value=\{draftRemoteSettings\.pairingToken\}/);
+  const inviteRestoreStart = page.indexOf("const inviteFragment = window.location.hash");
+  const fragmentRemoval = page.indexOf("window.history.replaceState", inviteRestoreStart);
+  const embeddedBridgeDetection = page.indexOf(
+    "const embeddedBridge = window.parent !== window",
+    inviteRestoreStart,
+  );
+  assert.ok(
+    inviteRestoreStart >= 0 &&
+      fragmentRemoval > inviteRestoreStart &&
+      fragmentRemoval < embeddedBridgeDetection,
+    "the invite bearer must leave the address bar before bridge detection or connection",
+  );
   assert.ok(
     page.indexOf('if (window.parent !== window)') < page.indexOf('if (reaperMode === "remote")'),
     "the existing embedded REAPER bridge must keep priority over remote mode",
@@ -82,7 +163,57 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(route, /trainingCueBankInstructions\(\)/);
   assert.match(route, /enforceTrainingCueBank\(script\)/);
   assert.match(route, /cueBank/);
+  assert.match(route, /settings\.yourName/);
 
-  assert.match(layout, /title:\s*"Story Cue Studio"/);
-  assert.match(layout, /REAPER-ready audio drama cue script/);
+  assert.match(layout, /(?:title:\s*|const title\s*=\s*)"Story Cue Studio"/);
+  assert.match(layout, /REAPER-ready (?:immersive )?audio drama/);
+});
+
+test("strictly validates ephemeral private REAPER invite fragments", async () => {
+  const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const parseInvite = compileInviteParser(page);
+  const now = 1_800_000_000_000;
+  const valid = {
+    version: 1,
+    relayUrl: "wss://relay.example.test/story",
+    machineId: "sruthin-studio",
+    token: "T".repeat(43),
+    nonce: "N".repeat(22),
+    issuedAt: now - 60_000,
+    expiresAt: now + 50 * 60_000,
+  };
+
+  const accepted = parseInvite(inviteFragment(valid), now);
+  assert.equal(accepted.status, "accepted");
+  assert.equal(accepted.settings.relayUrl, "wss://relay.example.test/story");
+  assert.equal(accepted.settings.machineId, "sruthin-studio");
+  assert.equal(accepted.settings.pairingToken, valid.token);
+  assert.equal(parseInvite(inviteFragment({ ...valid, relayUrl: "ws://localhost:8787" }), now).status, "accepted");
+
+  assert.equal(parseInvite(inviteFragment({ ...valid, relayUrl: "ws://relay.example.test" }), now).status, "invalid");
+  assert.equal(parseInvite(inviteFragment({ ...valid, token: "T".repeat(42) }), now).status, "invalid");
+  assert.equal(parseInvite(inviteFragment({ ...valid, token: "+".repeat(43) }), now).status, "invalid");
+  assert.equal(
+    parseInvite(inviteFragment({ ...valid, relayUrl: "wss://relay.example.test/?secret=query" }), now).status,
+    "invalid",
+  );
+  assert.equal(parseInvite(inviteFragment({ ...valid, nonce: undefined }), now).status, "invalid");
+  assert.equal(parseInvite(inviteFragment({ ...valid, extra: true }), now).status, "invalid");
+  assert.equal(
+    parseInvite(inviteFragment({ ...valid, issuedAt: now - 1_000, expiresAt: now + 91 * 60_000 }), now).status,
+    "invalid",
+  );
+  assert.equal(
+    parseInvite(inviteFragment({ ...valid, issuedAt: now + 6 * 60_000, expiresAt: now + 50 * 60_000 }), now).status,
+    "invalid",
+  );
+  assert.equal(
+    parseInvite(inviteFragment({ ...valid, issuedAt: now - 60_000, expiresAt: now - 1 }), now).status,
+    "expired",
+  );
+  const legacyField = { ...valid, pairingToken: valid.token };
+  delete legacyField.token;
+  assert.equal(parseInvite(inviteFragment(legacyField), now).status, "invalid");
+  assert.equal(parseInvite("#reaper-invite=not_base64url!", now).status, "invalid");
+  assert.equal(parseInvite("#some-other-fragment", now).status, "none");
 });

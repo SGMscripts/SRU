@@ -329,7 +329,9 @@ async function providerText(ai: Required<AIRequest>, instructions: string, input
 
 function generationInstructions(settings: Record<string, unknown>) {
   const profile = runtimeProfile(settings.runtimeMinutes);
-  const lead = settings.useMe ? "You" : String(settings.lead || "Lead");
+  const lead = settings.useMe
+    ? String(settings.yourName || "You").trim() || "You"
+    : String(settings.lead || "Lead").trim() || "Lead";
   const rival = String(settings.rival || "Rival");
   const elevenModel = String(settings.elevenModel || "eleven_multilingual_v2");
   const performanceTaste = String(settings.performanceTaste || "cinematic");

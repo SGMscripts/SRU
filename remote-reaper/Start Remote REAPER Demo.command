@@ -3,24 +3,34 @@
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 cd "$script_dir" || exit 1
 
-if [[ ! -f .env ]]; then
-  echo "Missing .env configuration."
-  echo "In Story Cue Studio, choose Internet Relay, create a token, then use Download config."
-  echo "Move the downloaded .env file into this folder and run this launcher again."
+npm_bin=""
+for candidate in /usr/local/bin/npm /opt/homebrew/bin/npm; do
+  if [[ -x "$candidate" ]]; then
+    npm_bin="$candidate"
+    break
+  fi
+done
+if [[ -z "$npm_bin" ]]; then
+  npm_bin="$(command -v npm 2>/dev/null)"
+fi
+if [[ -z "$npm_bin" ]]; then
+  echo "Node.js 22.13 or newer is required."
+  echo "Install Node.js, then double-click this launcher again."
   read -k 1 "?Press any key to close..."
   exit 1
 fi
 
 if [[ ! -d node_modules ]]; then
   echo "Installing the companion dependency once..."
-  /usr/local/bin/npm install || {
+  "$npm_bin" install || {
     read -k 1 "?Installation failed. Press any key to close..."
     exit 1
   }
 fi
 
-echo "Starting the public WSS tunnel and local REAPER companion..."
-/usr/local/bin/npm run demo
+echo "Starting a private REAPER guest demo..."
+echo "A fresh expiring invite will be copied to this Mac's clipboard."
+"$npm_bin" run demo
 exit_code=$?
 echo
 echo "Remote demo stopped."
