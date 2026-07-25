@@ -8,6 +8,8 @@ type Settings = {
   rival: string;
   places: number;
   useMe: boolean;
+  musicCueCount: number;
+  optimizeCues: boolean;
 };
 
 type AIProvider = "openai" | "gemini" | "compatible";
@@ -46,6 +48,7 @@ type ExpansionBeat = {
 const MIN_SPOKEN_WORDS = 1050;
 const WORDS_PER_MINUTE = 145;
 const AI_STORAGE_KEY = "story-cue-studio-ai-settings-v1";
+const CUE_TAG_PATTERN = /^\s*\[(SFX|AMBIENT|MUSIC):\s*(.*?)\]\s*$/i;
 
 const defaultAISettings: AISettings = {
   provider: "openai",
@@ -91,8 +94,8 @@ const reaperBaseUrls = [
 
 const expansionBeats: ExpansionBeat[] = [
   {
-    sfx: "LOW ROOM TONE SHIFTS",
-    music: "INVESTIGATION PULSE — SUBTLE",
+    sfx: "room shift",
+    music: "restrained pulse",
     narratorA: (moment, lead) => `The meaning of the moment did not settle immediately. ${moment} ${lead} replayed every detail, separating what had truly happened from what fear and urgency had added afterward.`,
     lead: "We cannot rush past this. Something important is hiding inside the details, and I want to understand it before we make the next mistake.",
     narratorB: (_moment, lead, rival) => `${rival} watched ${lead} in silence. The pause between them carried its own warning, because both understood that the safest answer and the honest answer might lead in opposite directions.`,
@@ -100,7 +103,7 @@ const expansionBeats: ExpansionBeat[] = [
     close: (_moment, lead) => `${lead} accepted that truth without answering. The situation had changed from a mystery into a choice, and every second of hesitation was quietly narrowing the choices that remained.`,
   },
   {
-    sfx: "DISTANT MOVEMENT BEHIND WALL",
+    sfx: "wall movement",
     narratorA: (moment, lead, rival) => `Pressure built around them in small, unmistakable signs. ${moment} ${lead} noticed the change first, while ${rival} studied the surrounding space for anything that did not belong.`,
     lead: "Stay close and listen. If this is meant to frighten us away, then someone is counting on us to stop asking questions.",
     narratorB: (_moment, lead, rival) => `For the first time, ${rival} looked less certain. Doubt did not weaken the warning in their voice; it made the warning feel earned, sharpened by something they had not yet admitted.`,
@@ -108,8 +111,8 @@ const expansionBeats: ExpansionBeat[] = [
     close: (_moment, lead, rival) => `The admission opened a distance between ${lead} and ${rival}. It was not betrayal yet, but it was close enough that neither of them could pretend trust would survive without an explanation.`,
   },
   {
-    sfx: "OBJECT SET DOWN WITH CONTROLLED IMPACT",
-    music: "SUSPICION BED — SLOW BUILD",
+    sfx: "object impact",
+    music: "suspicion build",
     narratorA: (moment, lead) => `A new piece of the story forced everything into a different shape. ${moment} What had seemed accidental now carried intention, and ${lead} could finally see a pattern running beneath the confusion.`,
     lead: "You knew this could happen. Maybe not every detail, but enough to recognize the pattern when it started.",
     narratorB: (_moment, lead, rival) => `${rival} did not deny it. Their expression tightened as if the truth had been waiting behind their teeth, dangerous not because it was complicated, but because it was simple.`,
@@ -117,7 +120,7 @@ const expansionBeats: ExpansionBeat[] = [
     close: (_moment, lead) => `Time had been purchased with silence, and the price was now visible. ${lead} felt anger rise, but beneath it was a colder realization: the threat was already close enough to act.`,
   },
   {
-    sfx: "FOOTSTEPS APPROACH THEN STOP",
+    sfx: "approach footstep",
     narratorA: (moment, lead, rival) => `The next decision arrived before either of them was ready. ${moment} ${lead} and ${rival} heard the world around them become suddenly still, the kind of stillness that comes just before movement.`,
     lead: "We choose now. We can keep reacting to whatever comes through that door, or we can move first and control where this ends.",
     narratorB: (_moment, lead, rival) => `${rival} measured the proposal against every danger they had avoided naming. Running promised temporary safety. Moving forward promised answers, but it also removed the protection of uncertainty.`,
@@ -125,8 +128,8 @@ const expansionBeats: ExpansionBeat[] = [
     close: (_moment, lead) => `${lead} was not certain. Certainty belonged to people with complete information, and they had almost none. What remained was resolve—the willingness to act while fear argued for delay.`,
   },
   {
-    sfx: "FAST MECHANICAL OR ELECTRICAL PULSE",
-    music: "DARK ACTION RHYTHM — ENTER",
+    sfx: "electric pulse",
+    music: "dark action",
     narratorA: (moment, lead) => `Their plan survived only until the world pushed back. ${moment} The response was faster and more precise than ${lead} expected, turning a careful approach into a race against consequences already in motion.`,
     lead: "Keep moving. Do not let the noise decide where you look. The real danger is using it to pull our attention away.",
     narratorB: (_moment, lead, rival) => `${rival} followed the instruction, covering the angle ${lead} could not see. For a brief stretch they moved as one unit, old distrust forced aside by the immediate need to survive.`,
@@ -134,7 +137,7 @@ const expansionBeats: ExpansionBeat[] = [
     close: (_moment, lead, rival) => `They committed without counting down. ${lead} moved first and ${rival} stayed close, while the pressure behind them grew loud enough to erase every thought except the next necessary step.`,
   },
   {
-    sfx: "HEAVY IMPACT FOLLOWED BY SILENCE",
+    sfx: "heavy impact",
     narratorA: (moment, lead, rival) => `At the height of the struggle, the assumption guiding them finally broke. ${moment} ${lead} saw the hidden connection, and ${rival} understood from their expression that the entire conflict had changed.`,
     lead: "This was never only about stopping us. We were being pushed toward this exact place, and we followed the path they prepared.",
     narratorB: (_moment, lead, rival) => `${rival} turned toward the evidence with new fear. Every earlier warning now sounded different, not like an attempt to escape danger, but like part of the mechanism that had delivered them to it.`,
@@ -142,8 +145,8 @@ const expansionBeats: ExpansionBeat[] = [
     close: (_moment, lead) => `${lead} felt the balance shift. They were still outmatched, but surprise no longer belonged entirely to the other side. One honest decision could become the advantage they had been missing.`,
   },
   {
-    sfx: "RISING ENERGY OR STRUCTURAL STRAIN",
-    music: "CLIMACTIC TENSION — FULL",
+    sfx: "structure strain",
+    music: "climactic tension",
     narratorA: (moment, lead, rival) => `The final confrontation gathered every unresolved choice into one place. ${moment} ${lead} stepped forward while ${rival} held the remaining route open, each trusting the other with a different part of the outcome.`,
     lead: "You wanted us divided and uncertain. That part worked. But you also gave us enough time to understand what matters, and that is the mistake you cannot take back.",
     narratorB: (_moment, lead, rival) => `${rival} answered with action rather than reassurance. The last barrier gave way, and the sound rolled through the space as the plan changed from possibility into irreversible motion.`,
@@ -151,7 +154,7 @@ const expansionBeats: ExpansionBeat[] = [
     close: (_moment, lead) => `${lead} used that chance. Fear remained, loud and physical, but it no longer controlled the direction of the story. The decisive act belonged to the person who had once entered without answers.`,
   },
   {
-    sfx: "TENSION RELEASE AND DISTANT AIR",
+    sfx: "air release",
     narratorA: (moment, lead, rival) => `When the immediate danger passed, silence returned in a gentler form. ${moment} ${lead} and ${rival} stood among the consequences, changed by what they had learned and by what they had chosen to protect.`,
     lead: "I thought the answer would make everything simple. It did not. But at least the next decision will belong to us.",
     narratorB: (_moment, lead, rival) => `${rival} looked toward the way back. Home still existed, but neither of them could return as the people they had been before the first warning disturbed the ordinary shape of the day.`,
@@ -177,6 +180,111 @@ function spokenWordCount(script: string) {
     .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu)?.length || 0;
 }
 
+const sfxStopWords = new Set([
+  "a", "an", "the", "and", "or", "of", "to", "with", "without", "in", "on", "at", "by", "for", "from",
+  "into", "over", "under", "up", "down", "back", "front", "near", "far", "as", "while", "when", "then",
+  "just", "only", "very", "really", "suddenly", "quietly", "loudly", "slowly", "quickly", "tense",
+  "heavy", "light", "soft", "hard", "fast", "slow", "sound", "noise", "effect", "accent",
+]);
+
+const sfxWordMap: Record<string, string> = {
+  breathing: "breath", breathes: "breath", breaths: "breath", creaking: "creak", creaks: "creak",
+  footsteps: "footstep", squealing: "squeak", squeaking: "squeak", screeching: "screech",
+  thumping: "impact", thump: "impact", banging: "impact", bang: "impact", clanging: "clang",
+  clank: "clang", knocking: "knock", knocks: "knock", slamming: "slam", slams: "slam",
+  crashing: "crash", crashes: "crash", scraping: "scrape", scrapes: "scrape", rattling: "rattle",
+  rattles: "rattle", rustling: "rustle", rustles: "rustle", gasping: "gasp", gasps: "gasp",
+  panting: "pant", pants: "pant", running: "run", walking: "walk", hitting: "hit",
+  punching: "punch", moving: "move", movement: "move", heartbeat: "heart beat",
+};
+
+const sfxActions = new Set([
+  "impact", "whoosh", "creak", "squeak", "scrape", "slam", "crack", "shatter", "crash", "thud",
+  "bang", "knock", "hit", "punch", "rattle", "rustle", "hiss", "gasp", "pant", "move", "splash",
+  "ring", "vibrate", "footstep", "pulse", "strain", "release",
+]);
+
+function optimizeSfxChunk(chunk: string) {
+  const rawTokens = chunk.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(Boolean);
+  const tokens: string[] = [];
+  for (const raw of rawTokens) {
+    if (sfxStopWords.has(raw)) continue;
+    let mapped = sfxWordMap[raw] || raw;
+    if (!sfxWordMap[raw] && mapped.endsWith("ing") && mapped.length > 5) mapped = mapped.slice(0, -3);
+    mapped.split(/\s+/).forEach((part) => {
+      if (part && !sfxStopWords.has(part) && !tokens.includes(part)) tokens.push(part);
+    });
+  }
+  if (!tokens.length) return "action detail";
+  const action = tokens.find((token) => sfxActions.has(token));
+  if (action) {
+    const subject = tokens.find((token) => token !== action);
+    return subject ? `${subject} ${action}` : `human ${action}`;
+  }
+  return tokens.slice(0, 2).join(" ");
+}
+
+function optimizeSfxBody(body: string) {
+  const chunks = body.split(/,|\bor\b/i).map(optimizeSfxChunk).filter(Boolean);
+  return Array.from(new Set(chunks)).slice(0, 3).join(", ");
+}
+
+function optimizeAmbientBody(body: string) {
+  const normalized = body.toLowerCase()
+    .replace(/\b(place|main|story|location|continuous|low|under|voice|contrasting|inner|reveal|quieter|intimate|returns?|fade|in|out|ambience|atmosphere|background)\b/g, " ")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized.split(" ").filter(Boolean).slice(0, 3).join(" ") || "quiet interior";
+}
+
+function optimizeMusicBody(body: string) {
+  if (/\bScene\s*:/i.test(body) && /\bMood\s*:/i.test(body)) return body;
+  const searchable = body.toLowerCase()
+    .replace(/\b(enter|fade|in|out|low|full|bed|music|cue)\b/g, " ")
+    .replace(/[^a-z0-9\s,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() || "restrained cinematic tension";
+  return `Scene: Story transition | Summary: Emotional direction changes | Mood: ${searchable} | Search: cinematic ${searchable} evolving arc`;
+}
+
+function optimizeCueScriptLocally(script: string) {
+  return script.split(/\r?\n/).map((line) => {
+    const match = line.match(CUE_TAG_PATTERN);
+    if (!match) return line;
+    const type = match[1].toUpperCase();
+    const body = match[2];
+    if (type === "SFX") return `[SFX: ${optimizeSfxBody(body)}]`;
+    if (type === "AMBIENT") return `[AMBIENT: ${optimizeAmbientBody(body)}]`;
+    return `[MUSIC: ${optimizeMusicBody(body)}]`;
+  }).join("\n");
+}
+
+function inferAmbientLocation(story: string, fallback: string) {
+  const lower = story.toLowerCase();
+  const locations = [
+    "abandoned train station", "underground tunnel", "hospital room", "city street", "forest trail",
+    "office interior", "family kitchen", "bedroom interior", "market crowd", "airport terminal",
+    "railway platform", "warehouse interior", "apartment interior", "school hallway",
+  ];
+  return locations.find((location) => location.split(" ").some((word) => lower.includes(word))) || fallback;
+}
+
+const localMusicBriefs = [
+  ["Opening uncertainty", "The ordinary world becomes unsafe", "tense, restrained", "sparse piano pulse building quiet suspicion"],
+  ["First warning", "A discovery raises the emotional stakes", "uneasy, mysterious", "low strings and distant piano with a cautious rise"],
+  ["Trust fractures", "The two characters begin doubting each other", "suspicious, intimate", "minimal cello pulse tightening beneath fragile piano"],
+  ["Choice point", "The lead commits to a dangerous course", "determined, urgent", "restrained percussion and rising strings gathering momentum"],
+  ["Hidden truth", "New evidence reverses the meaning of events", "shocked, ominous", "dark orchestral reveal with falling piano and low brass"],
+  ["Final confrontation", "The central conflict reaches its decisive action", "intense, defiant", "driving cinematic strings swelling toward a sharp climax"],
+  ["Aftermath", "The danger recedes but its emotional cost remains", "reflective, bittersweet", "warm solo piano resolving into a fragile final chord"],
+];
+
+function musicCue(index: number) {
+  const cue = localMusicBriefs[index % localMusicBriefs.length];
+  return `[MUSIC: Scene: ${cue[0]} | Summary: ${cue[1]} | Mood: ${cue[2]} | Search: ${cue[3]}]`;
+}
+
 function voiceLine(
   lines: string[],
   speaker: string,
@@ -198,13 +306,18 @@ function localStoryboard(story: string, settings: Settings) {
   const rival = clean(settings.rival, "Rival");
   const sentences = story.replace(/\s+/g, " ").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [story];
   const safeMoments = sentences.map((sentence) => sentence.replace(/\[[^\]]+\]/g, "").replace(/[“”"]/g, "").trim()).filter(Boolean);
-  const placeOne = "PLACE 1 — MAIN STORY LOCATION, CONTINUOUS AND LOW UNDER VOICE";
-  const placeTwo = "PLACE 2 — CONTRASTING INNER OR REVEAL LOCATION, QUIETER AND MORE INTIMATE";
+  const placeOne = inferAmbientLocation(story, "quiet interior");
+  const placeTwo = inferAmbientLocation(
+    story.replace(new RegExp(placeOne.split(" ").join("|"), "gi"), ""),
+    "hidden service corridor",
+  );
+  const musicCueCount = Math.max(1, Math.min(20, settings.musicCueCount || 7));
+  let musicIndex = 0;
   const lines = [
     `EPISODE — ${clean(settings.title, "UNTITLED STORY").toUpperCase()}`,
     "",
     `[AMBIENT: ${placeOne}]`,
-    "[MUSIC: OPENING TENSION BED — LOW]",
+    musicCue(musicIndex++),
     "",
   ];
 
@@ -215,18 +328,18 @@ function localStoryboard(story: string, settings: Settings) {
     const isLead = lower.includes(lead.toLowerCase());
     const isRival = lower.includes(rival.toLowerCase());
     if (index > 0 && settings.places === 2 && index === Math.floor(sentences.length / 2)) {
-      lines.push("[SFX: LOCATION TRANSITION WHOOSH]", `[AMBIENT: ${placeTwo}]`, "");
+      lines.push("[SFX: transition whoosh]", `[AMBIENT: ${placeTwo}]`, "");
     }
     if (/(door|gun|phone|step|footstep|rain|hit|crash|knock|ring)/.test(lower)) {
       const cue = lower.includes("phone") || lower.includes("ring")
-        ? "PHONE RING OR VIBRATION"
+        ? "phone ring, phone vibrate"
         : lower.includes("rain")
-          ? "RAIN ON GLASS"
+          ? "glass rain"
           : lower.includes("door")
-            ? "DOOR HANDLE OR DOOR OPEN"
+            ? "door handle, door open"
             : lower.includes("step")
-              ? "TENSE FOOTSTEPS"
-              : "IMPACT OR MOVEMENT ACCENT";
+              ? "person footstep"
+              : "object impact";
       lines.push(`[SFX: ${cue}]`);
     }
     if (isLead && /["“]/.test(text)) {
@@ -240,10 +353,10 @@ function localStoryboard(story: string, settings: Settings) {
   });
 
   let beatIndex = 0;
-  while (spokenWordCount(lines.join("\n")) < MIN_SPOKEN_WORDS) {
+  while (spokenWordCount(lines.join("\n")) < MIN_SPOKEN_WORDS || musicIndex < musicCueCount - 1) {
     const beat = expansionBeats[beatIndex % expansionBeats.length];
     const moment = safeMoments[beatIndex % safeMoments.length] || "The situation changed before either person was ready.";
-    if (beat.music) lines.push(`[MUSIC: ${beat.music}]`);
+    if (musicIndex < musicCueCount - 1) lines.push(musicCue(musicIndex++));
     if (settings.places === 2 && beatIndex === 3) lines.push(`[AMBIENT: ${placeTwo}]`);
     lines.push(`[SFX: ${beat.sfx}]`);
     voiceLine(lines, "Narrator", "narration", beat.narratorA(moment, lead, rival));
@@ -254,9 +367,10 @@ function localStoryboard(story: string, settings: Settings) {
     beatIndex += 1;
   }
 
-  if (settings.places === 2) lines.push("[AMBIENT: PLACE 1 RETURNS — MAIN STORY LOCATION, FADE IN]");
-  lines.push("[MUSIC: ENDING STING — FADE OUT]");
-  return lines.join("\n");
+  if (settings.places === 2) lines.push(`[AMBIENT: ${placeOne}]`);
+  if (musicIndex < musicCueCount) lines.push(musicCue(musicIndex));
+  const script = lines.join("\n");
+  return settings.optimizeCues ? optimizeCueScriptLocally(script) : script;
 }
 
 function cloneAISettings(settings: AISettings): AISettings {
@@ -270,11 +384,20 @@ function cloneAISettings(settings: AISettings): AISettings {
 
 export default function Home() {
   const [story, setStory] = useState(sample);
-  const [settings, setSettings] = useState<Settings>({ title: "The Last Signal", lead: "Maya", rival: "Elias", places: 2, useMe: false });
+  const [settings, setSettings] = useState<Settings>({
+    title: "The Last Signal",
+    lead: "Maya",
+    rival: "Elias",
+    places: 2,
+    useMe: false,
+    musicCueCount: 7,
+    optimizeCues: true,
+  });
   const [output, setOutput] = useState("");
   const [status, setStatus] = useState("Ready to shape a seven-minute story.");
   const [copied, setCopied] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
   const [runningReaperAction, setRunningReaperAction] = useState<string | null>(null);
   const [reaperStatus, setReaperStatus] = useState("Open REAPER before using these buttons.");
   const [aiSettings, setAISettings] = useState<AISettings>(cloneAISettings(defaultAISettings));
@@ -403,6 +526,48 @@ export default function Home() {
     }
   }
 
+  async function optimizeCueData() {
+    if (!output.trim()) {
+      setStatus("Generate a cue script before optimizing its cues.");
+      return;
+    }
+    setOptimizing(true);
+    setStatus(`Optimizing SFX, Ambient, and Music cue data with ${activeProviderConfig.apiKey ? providerLabels[aiSettings.provider] : "the local optimizer"}…`);
+    const localVersion = optimizeCueScriptLocally(output);
+    if (!activeProviderConfig.apiKey.trim()) {
+      setOutput(localVersion);
+      setStatus("Cue data optimized locally: short SFX search terms, location-based ambience, and searchable music briefs.");
+      setOptimizing(false);
+      return;
+    }
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "optimize_cues",
+          script: output,
+          ai: {
+            provider: aiSettings.provider,
+            apiKey: activeProviderConfig.apiKey,
+            model: activeProviderConfig.model,
+            baseUrl: activeProviderConfig.baseUrl,
+          },
+        }),
+      });
+      const data = await response.json() as { script?: string; error?: string; optimizedCount?: number };
+      if (!response.ok || !data.script) throw new Error(data.error || "Cue optimization failed.");
+      setOutput(data.script);
+      setStatus(`${providerLabels[aiSettings.provider]} optimized ${Number(data.optimizedCount || 0)} SFX, Ambient, and Music cues without changing the story text.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Cue optimization failed.";
+      setOutput(localVersion);
+      setStatus(`${message} The local cue optimizer was used instead.`);
+    } finally {
+      setOptimizing(false);
+    }
+  }
+
   async function copy() {
     await navigator.clipboard.writeText(output);
     setCopied(true);
@@ -497,6 +662,22 @@ export default function Home() {
           <label>Second character<input value={settings.rival} onChange={(event) => update("rival", event.target.value)} /></label>
         </div>
         <fieldset><legend>Sound locations</legend><button className={settings.places === 1 ? "choice active" : "choice"} onClick={() => update("places", 1)}>One place</button><button className={settings.places === 2 ? "choice active" : "choice"} onClick={() => update("places", 2)}>Two places</button></fieldset>
+        <div className="cue-controls">
+          <label>
+            Music cues per episode
+            <input
+              type="number"
+              min="1"
+              max="20"
+              value={settings.musicCueCount}
+              onChange={(event) => update("musicCueCount", Math.max(1, Math.min(20, Number(event.target.value) || 1)))}
+            />
+          </label>
+          <div className="toggle-row compact">
+            <div><strong>Optimize cue data</strong><small>Search-ready SFX, Ambient and Music cues</small></div>
+            <button aria-pressed={settings.optimizeCues} className={`toggle ${settings.optimizeCues ? "on" : ""}`} onClick={() => update("optimizeCues", !settings.optimizeCues)}><span /></button>
+          </div>
+        </div>
         <div className="cast"><span>CAST</span>{characters.map((name) => <b key={name}>{name}</b>)}<i>Narrator</i></div>
         <button className="generate" onClick={generate} disabled={generating}>{generating ? "Generating seven-minute script…" : "Generate 7+ minute cue script"} <span>→</span></button>
         <p className="status" role="status">{status}</p>
@@ -508,7 +689,13 @@ export default function Home() {
             <h2>3. REAPER-ready output</h2>
             <p>{output ? `${outputWords.toLocaleString()} spoken words · about ${outputMinutes} minutes` : "Minimum target: 1,050 spoken words."}</p>
           </div>
-          {output && <div className="actions"><button onClick={copy}>{copied ? "Copied" : "Copy"}</button><button className="download" onClick={download}>Download .txt</button></div>}
+          {output && <div className="actions">
+            <button className="optimize" onClick={() => void optimizeCueData()} disabled={optimizing}>
+              {optimizing ? "Optimizing…" : "Optimize Cue Data"}
+            </button>
+            <button onClick={copy}>{copied ? "Copied" : "Copy"}</button>
+            <button className="download" onClick={download}>Download .txt</button>
+          </div>}
         </div>
         {output ? <pre>{output}</pre> : <div className="empty"><div className="terminal-mark">›_</div><h3>Your seven-minute production script appears here.</h3><p>It will include structured voice directions and cue tracks, ready for your REAPER pipeline.</p></div>}
       </div>
@@ -598,7 +785,7 @@ export default function Home() {
           </label>}
           <div className="privacy-note">
             <strong>Stored only on this browser</strong>
-            <span>Your key is sent only when you generate a story. The site does not save it on the server.</span>
+            <span>Your key is sent only when you generate or optimize cues. The site does not save it on the server.</span>
           </div>
           {draftAISettings.provider === "compatible" && <p className="compatible-note">Supported: OpenRouter, Groq, Together, Mistral, DeepSeek, Cerebras, and Fireworks.</p>}
         </div>
