@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 export const IMPORT_ACTION = "_RS99a1bb9381b40ba9ade9d82fa74add533356b26c";
 export const RECALL_ACTION = "_RSb33e9ff14b29c13afa557ac9abaae96dd2fb3f79";
 export const ELEVEN_ACTION = "_RS3f041675526b507bc147e0a1002e05e5b868215a";
+export const PLAY_PAUSE_ACTION = "_dbab6e45e2cf4c988650dfad12851cc1";
 export const PROJECT_SECTION = "StoryCueStudio";
 export const STORY_TARGET_ROLE = "story_target";
 export const CHUNK_SIZE = 1800;
@@ -142,6 +143,15 @@ export class ReaperWebControl {
     return state.targetId;
   }
 
+  async assertTransportTarget() {
+    const role = await this.getProject("ProjectRole");
+    const targetId = await this.getProject("RemoteTargetId");
+    if (role !== STORY_TARGET_ROLE || !targetId) {
+      throw new Error("Open a dedicated story project and run “Enable Story Cue Studio Remote Target”.");
+    }
+    return targetId;
+  }
+
   async assertTargetUnchanged(expectedTargetId) {
     const role = await this.getProject("ProjectRole");
     const targetId = await this.getProject("RemoteTargetId");
@@ -153,6 +163,12 @@ export class ReaperWebControl {
   async runAction(action) {
     await this.command(action);
     await sleep(250);
+  }
+
+  async setEditCursor(seconds) {
+    const position = Math.max(0, Math.min(86400, Number(seconds) || 0));
+    await this.command(`SET/POS/${position.toFixed(3)}`);
+    return position;
   }
 
   async waitFor(key, timeoutMs) {
@@ -208,7 +224,8 @@ export class ReaperWebControl {
     allowPaidVoiceGeneration = false,
     onStatus = () => {},
   } = {}) {
-    const targetId = await this.assertTargetReady();
+    const transportAction = command.action === "transport-play-pause" || command.action === "transport-seek";
+    const targetId = transportAction ? await this.assertTransportTarget() : await this.assertTargetReady();
     const status = (state, stage, message, extras = {}) => onStatus({
       state,
       stage,
@@ -238,6 +255,21 @@ export class ReaperWebControl {
       status("progress", "voices", "Opening the ElevenLabs voice tool on the REAPER computer…");
       await this.runAction(ELEVEN_ACTION);
       status("complete", "complete", "ElevenLabs voice tool opened. No paid generation was started.");
+      return;
+    }
+
+    if (command.action === "transport-seek") {
+      await this.assertTargetUnchanged(targetId);
+      const position = await this.setEditCursor(command.cursorSeconds);
+      status("complete", "cursor", `REAPER edit cursor moved to ${Math.floor(position / 60)}:${String(Math.round(position) % 60).padStart(2, "0")}.`);
+      return;
+    }
+
+    if (command.action === "transport-play-pause") {
+      await this.assertTargetUnchanged(targetId);
+      status("progress", "transport", "Toggling REAPER playback…");
+      await this.runAction(PLAY_PAUSE_ACTION);
+      status("complete", "transport", "REAPER Play/Pause command was sent.");
       return;
     }
 

@@ -9,6 +9,8 @@ export const ALLOWED_ACTIONS = new Set([
   "cue-recall",
   "elevenlabs",
   "build-play",
+  "transport-play-pause",
+  "transport-seek",
 ]);
 
 export function tokenHash(value) {
@@ -19,9 +21,9 @@ export function scriptHash(value) {
   return createHash("sha256").update(String(value), "utf8").digest("hex");
 }
 
-export function commandHash(action, runtimeMinutes, script) {
+export function commandHash(action, runtimeMinutes, script, cursorSeconds = null) {
   return createHash("sha256")
-    .update(JSON.stringify([String(action), Number(runtimeMinutes), String(script)]), "utf8")
+    .update(JSON.stringify([String(action), Number(runtimeMinutes), String(script), cursorSeconds]), "utf8")
     .digest("hex");
 }
 
@@ -99,6 +101,14 @@ export function validateCommandMessage(value, expectedMachineId, now = Date.now(
     throw new Error("This remote REAPER action is not allowed.");
   }
   const runtimeMinutes = Number(value.runtimeMinutes) === 7 ? 7 : 3;
+  let cursorSeconds = null;
+  if (action === "transport-seek") {
+    const numericCursor = Number(value.cursorSeconds);
+    if (!Number.isFinite(numericCursor) || numericCursor < 0 || numericCursor > 86400) {
+      throw new Error("Cursor position must be between 0 and 24 hours.");
+    }
+    cursorSeconds = Number(numericCursor.toFixed(3));
+  }
   const createdAt = Number(value.createdAt) || now;
   const expiresAt = Number(value.expiresAt) || createdAt + 5 * 60 * 1000;
   if (expiresAt < now) throw new Error("This remote command has expired.");
@@ -126,8 +136,9 @@ export function validateCommandMessage(value, expectedMachineId, now = Date.now(
     action,
     script,
     scriptSha256: scriptHash(script),
-    commandSha256: commandHash(action, runtimeMinutes, script),
+    commandSha256: commandHash(action, runtimeMinutes, script, cursorSeconds),
     runtimeMinutes,
+    cursorSeconds,
     createdAt,
     expiresAt,
   };

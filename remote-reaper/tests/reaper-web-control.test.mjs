@@ -53,3 +53,16 @@ test("readiness protects unmarked or playing REAPER projects", async () => {
   state.set("ProjectRole", "");
   assert.match((await reaper.readiness()).message, /dedicated story project/i);
 });
+
+test("moves the edit cursor with the Web Control SET/POS command", async () => {
+  const calls = [];
+  const reaper = new ReaperWebControl({
+    fetchImpl: async (url) => {
+      calls.push(decodeURIComponent(String(url)));
+      return new Response("", { status: 200 });
+    },
+  });
+  const position = await reaper.setEditCursor(42.1256);
+  assert.equal(position, 42.1256);
+  assert.match(calls[0], /SET\/POS\/42\.126;/);
+});

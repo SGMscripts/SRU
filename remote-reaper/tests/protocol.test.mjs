@@ -16,7 +16,7 @@ Maya heard the signal.
 [SFX: PHONE RING]
 [AMBIENT: RAIN | END]`;
 
-test("validates and sanitizes the four symbolic remote actions", () => {
+test("validates and sanitizes the allowlisted remote actions", () => {
   const now = Date.now();
   const command = validateCommandMessage({
     type: "command",
@@ -44,6 +44,29 @@ test("validates and sanitizes the four symbolic remote actions", () => {
     ...command,
     action: "_RS_arbitrary_action",
   }, "sruthin-studio", now), /not allowed/i);
+});
+
+test("allows only bounded numeric edit-cursor positions", () => {
+  const now = Date.now();
+  const command = validateCommandMessage({
+    type: "command",
+    version: 1,
+    requestId: "transport-job-0001",
+    machineId: "sruthin-studio",
+    action: "transport-seek",
+    script: "",
+    runtimeMinutes: 3,
+    cursorSeconds: 42.1256,
+    createdAt: now,
+    expiresAt: now + 60000,
+  }, "sruthin-studio", now);
+  assert.equal(command.cursorSeconds, 42.126);
+  assert.equal(command.commandSha256, commandHash("transport-seek", 3, "", 42.126));
+  assert.throws(() => validateCommandMessage({
+    ...command,
+    requestId: "transport-job-0002",
+    cursorSeconds: -1,
+  }, "sruthin-studio", now), /Cursor position/i);
 });
 
 test("rejects expired, malformed, and oversized storyboard commands", () => {

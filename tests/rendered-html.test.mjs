@@ -129,6 +129,12 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(page, /const fallback = prepareGeneratedCueScript\(localStoryboard\(story, settings\), settings\)/);
   assert.match(page, /const prepared = prepareGeneratedCueScript\(data\.script, settings\)/);
   assert.match(page, /Cue prep:/);
+  assert.match(page, /transport-play-pause/);
+  assert.match(page, /_dbab6e45e2cf4c988650dfad12851cc1/);
+  assert.match(page, /transport-seek/);
+  assert.match(page, /SET\/POS\//);
+  assert.match(page, /Story edit cursor/);
+  assert.match(page, /Click or drag to move the REAPER edit cursor/);
   assert.match(page, /type AIProvider = "openai" \| "gemini" \| "groq" \| "compatible"/);
   assert.match(page, /groq:\s*\{ apiKey: "", model: "openai\/gpt-oss-20b"/);
   assert.match(page, /Groq Fast · GPT-OSS 20B/);

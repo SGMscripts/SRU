@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   enforceTrainingCueBank,
   TRAINING_CUE_BANK_META,
@@ -64,6 +64,12 @@ type ReaperAction = {
   description: string;
   command: string;
   tone: "lime" | "orange" | "blue" | "purple";
+};
+
+type StoryTimelineMarker = {
+  seconds: number;
+  label: string;
+  type: "SFX" | "AMBIENT" | "MUSIC" | "VOICE";
 };
 
 type ReaperConnectionMode = "local" | "remote";
@@ -220,6 +226,24 @@ const reaperActions: ReaperAction[] = [
   },
 ];
 
+const transportPlayPauseAction: ReaperAction = {
+  id: "transport-play-pause",
+  label: "Play / Pause",
+  description: "Toggle REAPER playback from the story timeline.",
+  command: "_dbab6e45e2cf4c988650dfad12851cc1",
+  tone: "purple",
+};
+
+const transportSeekAction: ReaperAction = {
+  id: "transport-seek",
+  label: "Move edit cursor",
+  description: "Move the REAPER edit cursor to the selected story moment.",
+  command: "",
+  tone: "blue",
+};
+
+const allReaperActions = [...reaperActions, transportPlayPauseAction, transportSeekAction];
+
 const reaperBaseUrls = [
   "http://127.0.0.1:8080",
   "http://127.0.0.1:8089",
@@ -317,6 +341,31 @@ function spokenWordCount(script: string) {
     })
     .join(" ")
     .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu)?.length || 0;
+}
+
+function formatTimelineTime(seconds: number) {
+  const rounded = Math.max(0, Math.round(Number(seconds) || 0));
+  return `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, "0")}`;
+}
+
+function createStoryTimelineMarkers(script: string): StoryTimelineMarker[] {
+  let spokenWords = 0;
+  const markers: StoryTimelineMarker[] = [];
+  for (const line of script.split(/\r?\n/)) {
+    const match = line.match(/^\s*\[(SFX|AMBIENT|MUSIC|VOICE):\s*(.*?)\]\s*$/i);
+    if (match) {
+      const type = match[1].toUpperCase() as StoryTimelineMarker["type"];
+      const detail = match[2].replace(/\s*\|\s*(?:START|END)\s*$/i, "").trim();
+      markers.push({
+        seconds: (spokenWords / WORDS_PER_MINUTE) * 60,
+        label: detail || type,
+        type,
+      });
+      continue;
+    }
+    if (line.trim() && !/^EPISODE\b/i.test(line)) spokenWords += spokenWordCount(line);
+  }
+  return markers.filter((marker, index) => index < 32 && marker.type !== "VOICE");
 }
 
 function limitProseWords(value: string, maximum: number) {
@@ -858,6 +907,9 @@ export default function Home() {
   const [output, setOutput] = useState("");
   const [status, setStatus] = useState("Ready to shape a three-minute demo or a seven-minute episode.");
   const [copied, setCopied] = useState(false);
+  const [timelineCursorSeconds, setTimelineCursorSeconds] = useState(0);
+  const [timelineScrubbing, setTimelineScrubbing] = useState(false);
+  const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
   const [ranging, setRanging] = useState(false);
@@ -892,6 +944,8 @@ export default function Home() {
   const characters = useMemo(() => [leadName, rivalName], [leadName, rivalName]);
   const outputWords = useMemo(() => spokenWordCount(output), [output]);
   const outputMinutes = outputWords ? (outputWords / WORDS_PER_MINUTE).toFixed(1) : "0.0";
+  const timelineDurationSeconds = Math.max(1, (outputWords / WORDS_PER_MINUTE) * 60);
+  const storyTimelineMarkers = useMemo(() => createStoryTimelineMarkers(output), [output]);
   const activeProviderConfig = aiSettings[aiSettings.provider];
   const draftProviderConfig = draftAISettings[draftAISettings.provider];
   const selectedRuntime = runtimeProfile(settings.runtimeMinutes);
@@ -991,6 +1045,10 @@ export default function Home() {
     }, 0);
     return () => window.clearTimeout(restore);
   }, []);
+
+  useEffect(() => {
+    setTimelineCursorSeconds((current) => Math.min(current, timelineDurationSeconds));
+  }, [timelineDurationSeconds]);
 
   useEffect(() => {
     const inviteFragment = window.location.hash.startsWith(REMOTE_INVITE_PREFIX)
@@ -1175,7 +1233,7 @@ export default function Home() {
         const machineId = String(pending.machineId || selectedSettings.machineId).trim();
         if (
           /^[a-z0-9][a-z0-9_-]{7,127}$/i.test(String(pending.requestId || "")) &&
-          reaperActions.some((candidate) => candidate.id === action) &&
+          allReaperActions.some((candidate) => candidate.id === action) &&
           machineId === selectedSettings.machineId.trim() &&
           selectedMode === "remote" &&
           age >= 0 &&
@@ -1924,9 +1982,10 @@ export default function Home() {
     URL.revokeObjectURL(link.href);
   }
 
-  function sendRemoteReaperCommand(action: ReaperAction) {
+  function sendRemoteReaperCommand(action: ReaperAction, cursorSeconds?: number) {
     const socket = remoteSocketRef.current;
-    if (remoteState !== "online" || !socket || socket.readyState !== WebSocket.OPEN) {
+    const transportAction = action.id === "transport-play-pause" || action.id === "transport-seek";
+    if ((!transportAction && remoteState !== "online") || !socket || socket.readyState !== WebSocket.OPEN) {
       setReaperStatus("Remote REAPER is not ready. Connect the relay and start the Mac companion with a dedicated story project open.");
       return;
     }
@@ -1972,6 +2031,7 @@ export default function Home() {
         action: action.id,
         script: action.id === "story-importer" || action.id === "build-play" ? output : "",
         runtimeMinutes: settings.runtimeMinutes,
+        cursorSeconds: Number.isFinite(cursorSeconds) ? Math.max(0, Number(cursorSeconds)) : undefined,
       }));
     } catch {
       cancelPendingRemoteCommand("The remote socket closed before the command could be sent. Reconnect and try again.");
@@ -1985,7 +2045,7 @@ export default function Home() {
     armRemoteCompletionTimer(pending);
   }
 
-  async function sendReaperCommand(action: ReaperAction) {
+  async function sendReaperCommand(action: ReaperAction, cursorSeconds?: number) {
     if (action.id === "story-importer" || action.id === "build-play") {
       if (!output.trim()) {
         setReaperStatus("Generate a cue script before importing it.");
@@ -2001,12 +2061,13 @@ export default function Home() {
         action: action.id,
         script: output,
         runtimeMinutes: settings.runtimeMinutes,
+        cursorSeconds: Number.isFinite(cursorSeconds) ? Math.max(0, Number(cursorSeconds)) : undefined,
       }, "*");
       return;
     }
 
     if (reaperMode === "remote") {
-      sendRemoteReaperCommand(action);
+      sendRemoteReaperCommand(action, cursorSeconds);
       return;
     }
 
@@ -2024,14 +2085,28 @@ export default function Home() {
       }
     }
 
+    const command = action.id === "transport-seek"
+      ? `SET/POS/${Math.max(0, Number(cursorSeconds) || 0).toFixed(3)}`
+      : action.command;
+    if (!command) {
+      setReaperStatus("This REAPER command is not configured.");
+      return;
+    }
+
     setRunningReaperAction(action.id);
-    setReaperStatus(action.id === "story-importer" ? "Script copied. Sending Import Story to REAPER…" : `Sending “${action.label}” to REAPER…`);
+    setReaperStatus(
+      action.id === "story-importer"
+        ? "Script copied. Sending Import Story to REAPER…"
+        : action.id === "transport-seek"
+          ? `Moving the REAPER edit cursor to ${formatTimelineTime(cursorSeconds || 0)}…`
+          : `Sending “${action.label}” to REAPER…`,
+    );
     let sent = false;
     for (const baseUrl of reaperBaseUrls) {
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 1500);
       try {
-        await fetch(`${baseUrl}/_/${encodeURIComponent(action.command)};`, {
+        await fetch(`${baseUrl}/_/${encodeURIComponent(command)};`, {
           method: "GET",
           mode: "no-cors",
           cache: "no-store",
@@ -2053,9 +2128,30 @@ export default function Home() {
       sent
         ? action.id === "story-importer"
           ? "Script copied and Import Story was sent to REAPER."
-          : `“${action.label}” was sent to REAPER.`
+          : action.id === "transport-seek"
+            ? `REAPER edit cursor moved to ${formatTimelineTime(cursorSeconds || 0)}.`
+            : `“${action.label}” was sent to REAPER.`
         : "REAPER could not be reached. Open REAPER and enable Web Control on port 8080 or 8089.",
     );
+  }
+
+  function commitTimelineCursor(seconds: number) {
+    const next = Math.max(0, Math.min(timelineDurationSeconds, seconds));
+    setTimelineCursorSeconds(next);
+    void sendReaperCommand(transportSeekAction, next);
+  }
+
+  function updateTimelineCursorFromPointer(event: ReactPointerEvent<HTMLDivElement>, commit = false) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - bounds.left) / Math.max(1, bounds.width)));
+    const seconds = ratio * timelineDurationSeconds;
+    setTimelineCursorSeconds(seconds);
+    if (commit) commitTimelineCursor(seconds);
+  }
+
+  function toggleTimelinePlayback() {
+    setTimelinePlaying((playing) => !playing);
+    void sendReaperCommand(transportPlayPauseAction);
   }
 
   return <main className="shell">
@@ -2297,7 +2393,69 @@ export default function Home() {
             <button className="download" onClick={download}>Download .txt</button>
           </div>}
         </div>
-        {output ? <pre>{output}</pre> : <div className="empty"><div className="terminal-mark">›_</div><h3>Your selected production storyboard appears here.</h3><p>Choose three minutes or the original seven-minute format. Both include structured voice directions and cue tracks for REAPER.</p></div>}
+        {output ? <>
+          <section className="story-transport" aria-label="REAPER story timeline">
+            <div className="story-transport-head">
+              <div><span>DAW TRANSPORT</span><strong>Story edit cursor</strong></div>
+              <p>Click or drag to move the REAPER edit cursor, then play the audio story.</p>
+            </div>
+            <div className="story-transport-controls">
+              <button
+                type="button"
+                className={`story-play ${timelinePlaying ? "playing" : ""}`}
+                onClick={toggleTimelinePlayback}
+                disabled={runningReaperAction !== null}
+                aria-label={timelinePlaying ? "Pause REAPER playback" : "Play REAPER audio story"}
+                title="Play / Pause in REAPER"
+              >
+                {timelinePlaying ? "Ⅱ" : "▶"}
+              </button>
+              <output className="story-time" aria-label="Edit cursor time">{formatTimelineTime(timelineCursorSeconds)} <span>/ {formatTimelineTime(timelineDurationSeconds)}</span></output>
+              <div
+                className={`story-timeline ${timelineScrubbing ? "scrubbing" : ""}`}
+                role="slider"
+                tabIndex={0}
+                aria-label="REAPER edit cursor"
+                aria-valuemin={0}
+                aria-valuemax={Math.round(timelineDurationSeconds)}
+                aria-valuenow={Math.round(timelineCursorSeconds)}
+                aria-valuetext={`${formatTimelineTime(timelineCursorSeconds)} of ${formatTimelineTime(timelineDurationSeconds)}`}
+                onPointerDown={(event) => {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  setTimelineScrubbing(true);
+                  updateTimelineCursorFromPointer(event);
+                }}
+                onPointerMove={(event) => {
+                  if (timelineScrubbing) updateTimelineCursorFromPointer(event);
+                }}
+                onPointerUp={(event) => {
+                  if (!timelineScrubbing) return;
+                  updateTimelineCursorFromPointer(event, true);
+                  setTimelineScrubbing(false);
+                }}
+                onPointerCancel={() => setTimelineScrubbing(false)}
+                onKeyDown={(event) => {
+                  const adjustment = event.key === "ArrowLeft" ? -5 : event.key === "ArrowRight" ? 5 : 0;
+                  if (!adjustment) return;
+                  event.preventDefault();
+                  commitTimelineCursor(timelineCursorSeconds + adjustment);
+                }}
+              >
+                <div className="story-timeline-fill" style={{ width: `${(timelineCursorSeconds / timelineDurationSeconds) * 100}%` }} />
+                {storyTimelineMarkers.map((marker, index) => <span
+                  key={`${marker.type}-${marker.seconds}-${index}`}
+                  className={`story-marker ${marker.type.toLowerCase()}`}
+                  style={{ left: `${Math.min(100, (marker.seconds / timelineDurationSeconds) * 100)}%` }}
+                  title={`${formatTimelineTime(marker.seconds)} · ${marker.type}: ${marker.label}`}
+                  aria-hidden="true"
+                />)}
+                <span className="story-cursor" style={{ left: `${(timelineCursorSeconds / timelineDurationSeconds) * 100}%` }} aria-hidden="true" />
+              </div>
+            </div>
+            <div className="story-legend" aria-hidden="true"><span className="sfx">SFX</span><span className="ambient">Ambient</span><span className="music">Music</span><i>Play/Pause command: _dbab6e45e2cf4c988650dfad12851cc1</i></div>
+          </section>
+          <pre>{output}</pre>
+        </> : <div className="empty"><div className="terminal-mark">›_</div><h3>Your selected production storyboard appears here.</h3><p>Choose three minutes or the original seven-minute format. Both include structured voice directions and cue tracks for REAPER.</p></div>}
       </div>
 
       <section className="panel reaper-panel" aria-labelledby="reaper-heading">
