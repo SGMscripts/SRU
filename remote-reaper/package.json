@@ -1,0 +1,21 @@
+{
+  "name": "story-cue-studio-remote-reaper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "relay": "node --env-file-if-exists=.env relay.mjs",
+    "companion": "node --env-file-if-exists=.env companion.mjs",
+    "demo": "node --env-file=.env demo.mjs",
+    "journal:status": "node --env-file-if-exists=.env companion.mjs --journal-status",
+    "clear-safety-lock": "node --env-file-if-exists=.env companion.mjs --clear-safety-lock",
+    "allow-repeat-build": "node --env-file-if-exists=.env companion.mjs --allow-repeat-build",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

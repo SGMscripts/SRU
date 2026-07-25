@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   enforceTrainingCueBank,
   TRAINING_CUE_BANK_META,
@@ -53,6 +53,42 @@ type ReaperAction = {
   tone: "lime" | "orange" | "blue" | "purple";
 };
 
+type ReaperConnectionMode = "local" | "remote";
+
+type RemoteReaperSettings = {
+  relayUrl: string;
+  machineId: string;
+  pairingToken: string;
+};
+
+type RemoteReaperState =
+  | "disconnected"
+  | "connecting"
+  | "relay-only"
+  | "online"
+  | "error";
+
+type RemoteRelayMessage = {
+  type?: string;
+  machineId?: string;
+  requestId?: string;
+  online?: boolean;
+  reaperOnline?: boolean;
+  state?: string;
+  stage?: string;
+  message?: string;
+  done?: boolean;
+  error?: boolean;
+  actualDurationSeconds?: number;
+};
+
+type PendingRemoteCommand = {
+  requestId: string;
+  action: string;
+  machineId: string;
+  createdAt: number;
+};
+
 type ExpansionBeat = {
   sfx: string;
   music?: string;
@@ -66,7 +102,16 @@ type ExpansionBeat = {
 const WORDS_PER_MINUTE = 145;
 const AI_STORAGE_KEY = "story-cue-studio-ai-settings-v1";
 const VOICE_STORAGE_KEY = "story-cue-studio-voice-settings-v1";
+const REMOTE_REAPER_STORAGE_KEY = "story-cue-studio-remote-reaper-v1";
+const REMOTE_PENDING_STORAGE_KEY = "story-cue-studio-remote-pending-v1";
 const CUE_TAG_PATTERN = /^\s*\[(SFX|AMBIENT|MUSIC):\s*(.*?)\]\s*$/i;
+const REMOTE_PROTOCOL_VERSION = 1;
+
+const defaultRemoteReaperSettings: RemoteReaperSettings = {
+  relayUrl: "",
+  machineId: "sruthin-studio",
+  pairingToken: "",
+};
 
 const elevenModels = [
   { id: "eleven_multilingual_v2", label: "Multilingual v2 · stable long-form" },
@@ -522,6 +567,65 @@ function cloneAISettings(settings: AISettings): AISettings {
   };
 }
 
+function normalizeRelayUrl(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error("Enter the secure WebSocket relay URL.");
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error("Enter a valid WebSocket relay URL.");
+  }
+  if (url.username || url.password) {
+    throw new Error("Do not place usernames or passwords in the relay URL.");
+  }
+  const localDevelopment =
+    url.protocol === "ws:" &&
+    (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+  if (url.protocol !== "wss:" && !localDevelopment) {
+    throw new Error("Internet relay URLs must begin with wss://.");
+  }
+  url.hash = "";
+  return url.toString();
+}
+
+function validateRemoteReaperSettings(settings: RemoteReaperSettings) {
+  const relayUrl = normalizeRelayUrl(settings.relayUrl);
+  const machineId = settings.machineId.trim();
+  const pairingToken = settings.pairingToken.trim();
+  if (!/^[a-z0-9][a-z0-9_-]{2,63}$/i.test(machineId)) {
+    throw new Error("Machine ID must be 3–64 letters, numbers, underscores, or dashes.");
+  }
+  if (pairingToken.length < 16) {
+    throw new Error("Use a pairing token containing at least 16 characters.");
+  }
+  if (pairingToken.length > 256) {
+    throw new Error("Pairing tokens cannot exceed 256 characters.");
+  }
+  return { relayUrl, machineId, pairingToken };
+}
+
+function generatePairingToken() {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function generateRequestId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `${Date.now().toString(36)}-${generatePairingToken().slice(0, 16)}`;
+}
+
+function formatRemoteDuration(value: number | undefined) {
+  const seconds = Math.max(0, Math.round(Number(value) || 0));
+  if (!seconds) return "";
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function remoteCompletionLimit(action: string) {
+  return action === "build-play" ? 35 * 60 * 1000 : 3 * 60 * 1000;
+}
+
 export default function Home() {
   const [story, setStory] = useState(sample);
   const [settings, setSettings] = useState<Settings>({
@@ -549,6 +653,14 @@ export default function Home() {
   const [ranging, setRanging] = useState(false);
   const [runningReaperAction, setRunningReaperAction] = useState<string | null>(null);
   const [reaperStatus, setReaperStatus] = useState("Open REAPER before using these buttons.");
+  const [reaperMode, setReaperMode] = useState<ReaperConnectionMode>("local");
+  const [remoteSettings, setRemoteSettings] = useState<RemoteReaperSettings>(defaultRemoteReaperSettings);
+  const [draftRemoteSettings, setDraftRemoteSettings] = useState<RemoteReaperSettings>(defaultRemoteReaperSettings);
+  const [remoteState, setRemoteState] = useState<RemoteReaperState>("disconnected");
+  const [remoteStateMessage, setRemoteStateMessage] = useState("Add a secure relay URL to control REAPER from another network.");
+  const [remoteConnectRevision, setRemoteConnectRevision] = useState(0);
+  const [showPairingToken, setShowPairingToken] = useState(false);
+  const [isEmbeddedBridge, setIsEmbeddedBridge] = useState(false);
   const [aiSettings, setAISettings] = useState<AISettings>(cloneAISettings(defaultAISettings));
   const [draftAISettings, setDraftAISettings] = useState<AISettings>(cloneAISettings(defaultAISettings));
   const [aiSettingsOpen, setAISettingsOpen] = useState(false);
@@ -560,6 +672,48 @@ export default function Home() {
   const activeProviderConfig = aiSettings[aiSettings.provider];
   const draftProviderConfig = draftAISettings[draftAISettings.provider];
   const selectedRuntime = runtimeProfile(settings.runtimeMinutes);
+  const remoteSocketRef = useRef<WebSocket | null>(null);
+  const remoteRequestRef = useRef<string | null>(null);
+  const remotePendingRef = useRef<PendingRemoteCommand | null>(null);
+  const remoteAckTimerRef = useRef<number | null>(null);
+  const remoteCompletionTimerRef = useRef<number | null>(null);
+  const remoteReconnectAttemptRef = useRef(0);
+
+  const cancelPendingRemoteCommand = useCallback((message?: string) => {
+    if (remoteAckTimerRef.current !== null) {
+      window.clearTimeout(remoteAckTimerRef.current);
+      remoteAckTimerRef.current = null;
+    }
+    if (remoteCompletionTimerRef.current !== null) {
+      window.clearTimeout(remoteCompletionTimerRef.current);
+      remoteCompletionTimerRef.current = null;
+    }
+    remoteRequestRef.current = null;
+    remotePendingRef.current = null;
+    if (typeof window !== "undefined") sessionStorage.removeItem(REMOTE_PENDING_STORAGE_KEY);
+    setRunningReaperAction(null);
+    if (message) setReaperStatus(message);
+  }, []);
+
+  const armRemoteCompletionTimer = useCallback((pending: PendingRemoteCommand) => {
+    if (remoteCompletionTimerRef.current !== null) {
+      window.clearTimeout(remoteCompletionTimerRef.current);
+      remoteCompletionTimerRef.current = null;
+    }
+    const remaining = remoteCompletionLimit(pending.action) - (Date.now() - pending.createdAt);
+    if (remaining <= 0) {
+      cancelPendingRemoteCommand(
+        "Remote REAPER did not report completion in time. The outcome is unknown; inspect the Mac before trying again.",
+      );
+      return;
+    }
+    remoteCompletionTimerRef.current = window.setTimeout(() => {
+      if (remoteRequestRef.current !== pending.requestId) return;
+      cancelPendingRemoteCommand(
+        "Remote REAPER did not report completion in time. The outcome is unknown; inspect the Mac before trying again.",
+      );
+    }, remaining);
+  }, [cancelPendingRemoteCommand]);
 
   useEffect(() => {
     const restore = window.setTimeout(() => {
@@ -583,6 +737,76 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const restore = window.setTimeout(() => {
+      const embeddedBridge = window.parent !== window;
+      setIsEmbeddedBridge(embeddedBridge);
+      let restoredMachineId = defaultRemoteReaperSettings.machineId;
+      let restoredMode: ReaperConnectionMode = "local";
+      try {
+        const saved = localStorage.getItem(REMOTE_REAPER_STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved) as {
+            mode?: ReaperConnectionMode;
+            settings?: Partial<RemoteReaperSettings>;
+          };
+          const restored = {
+            relayUrl: String(parsed.settings?.relayUrl || ""),
+            machineId: String(parsed.settings?.machineId || defaultRemoteReaperSettings.machineId),
+            pairingToken: String(parsed.settings?.pairingToken || ""),
+          };
+          restoredMachineId = restored.machineId.trim();
+          restoredMode = parsed.mode === "remote" ? "remote" : "local";
+          setRemoteSettings(restored);
+          setDraftRemoteSettings(restored);
+          if (restoredMode === "remote") setReaperMode("remote");
+        }
+      } catch {
+        localStorage.removeItem(REMOTE_REAPER_STORAGE_KEY);
+      }
+      if (embeddedBridge) return;
+      try {
+        const pendingText = sessionStorage.getItem(REMOTE_PENDING_STORAGE_KEY);
+        if (pendingText) {
+          const pending = JSON.parse(pendingText) as {
+            requestId?: string;
+            action?: string;
+            machineId?: string;
+            createdAt?: number;
+          };
+          const age = Date.now() - Number(pending.createdAt || 0);
+          const action = String(pending.action || "");
+          const machineId = String(pending.machineId || restoredMachineId).trim();
+          if (
+            /^[a-z0-9][a-z0-9_-]{7,127}$/i.test(String(pending.requestId || "")) &&
+            reaperActions.some((candidate) => candidate.id === action) &&
+            machineId === restoredMachineId &&
+            restoredMode === "remote" &&
+            age >= 0 &&
+            age < remoteCompletionLimit(action)
+          ) {
+            const restoredPending: PendingRemoteCommand = {
+              requestId: String(pending.requestId),
+              action,
+              machineId,
+              createdAt: Number(pending.createdAt),
+            };
+            remoteRequestRef.current = restoredPending.requestId;
+            remotePendingRef.current = restoredPending;
+            setRunningReaperAction(restoredPending.action);
+            setReaperStatus("Recovering the unfinished remote REAPER command. Do not retry while its status is being checked.");
+            armRemoteCompletionTimer(restoredPending);
+          } else {
+            sessionStorage.removeItem(REMOTE_PENDING_STORAGE_KEY);
+          }
+        }
+      } catch {
+        sessionStorage.removeItem(REMOTE_PENDING_STORAGE_KEY);
+      }
+    }, 0);
+    return () => window.clearTimeout(restore);
+  }, [armRemoteCompletionTimer]);
+
+  useEffect(() => {
     function receiveBridgeStatus(event: MessageEvent) {
       if (event.source !== window.parent) return;
       if (!event.data || event.data.type !== "story-cue-studio:status") return;
@@ -592,6 +816,195 @@ export default function Home() {
     window.addEventListener("message", receiveBridgeStatus);
     return () => window.removeEventListener("message", receiveBridgeStatus);
   }, []);
+
+  useEffect(() => {
+    if (reaperMode !== "remote" || window.parent !== window) {
+      remoteSocketRef.current?.close(1000, "Local bridge selected");
+      remoteSocketRef.current = null;
+      remoteReconnectAttemptRef.current = 0;
+      return;
+    }
+
+    let validated: RemoteReaperSettings;
+    try {
+      validated = validateRemoteReaperSettings(remoteSettings);
+    } catch (error) {
+      const invalidTimer = window.setTimeout(() => {
+        setRemoteState("disconnected");
+        setRemoteStateMessage(error instanceof Error ? error.message : "Complete the remote connection settings.");
+      }, 0);
+      return () => window.clearTimeout(invalidTimer);
+    }
+
+    let stopped = false;
+    let paired = false;
+    let suppressReconnect = false;
+    let reconnectTimer: number | null = null;
+
+    function clearAckTimer() {
+      if (remoteAckTimerRef.current !== null) {
+        window.clearTimeout(remoteAckTimerRef.current);
+        remoteAckTimerRef.current = null;
+      }
+    }
+
+    function queryPendingStatus(socket: WebSocket) {
+      const pending = remotePendingRef.current;
+      if (!pending || pending.requestId !== remoteRequestRef.current) return;
+      if (pending.machineId !== validated.machineId) {
+        cancelPendingRemoteCommand(
+          "The remote machine settings changed while a command was unfinished. Its outcome is unknown; inspect REAPER before trying again.",
+        );
+        return;
+      }
+      if (socket.readyState !== WebSocket.OPEN) return;
+      setRunningReaperAction(pending.action);
+      setReaperStatus("Reconnected. Recovering the unfinished remote REAPER command; do not retry it yet.");
+      try {
+        socket.send(JSON.stringify({
+          type: "status_query",
+          version: REMOTE_PROTOCOL_VERSION,
+          machineId: validated.machineId,
+          requestId: pending.requestId,
+        }));
+      } catch {
+        setReaperStatus("Status recovery was interrupted. Reconnecting; do not retry the unfinished command.");
+        socket.close(1011, "Status recovery interrupted");
+        return;
+      }
+      clearAckTimer();
+      remoteAckTimerRef.current = window.setTimeout(() => {
+        if (remoteRequestRef.current !== pending.requestId) return;
+        cancelPendingRemoteCommand(
+          "The relay did not return the unfinished command status. Its outcome is unknown; inspect REAPER before trying again.",
+        );
+      }, 15000);
+      armRemoteCompletionTimer(pending);
+    }
+
+    function connect() {
+      if (stopped) return;
+      paired = false;
+      setRemoteState("connecting");
+      setRemoteStateMessage("Connecting securely to the remote relay…");
+      const socket = new WebSocket(validated.relayUrl);
+      remoteSocketRef.current = socket;
+
+      socket.addEventListener("open", () => {
+        setRemoteStateMessage("Relay reached. Pairing with the REAPER computer…");
+        socket.send(JSON.stringify({
+          type: "pair",
+          version: REMOTE_PROTOCOL_VERSION,
+          role: "controller",
+          machineId: validated.machineId,
+          token: validated.pairingToken,
+        }));
+      });
+
+      socket.addEventListener("message", (event) => {
+        let payload: RemoteRelayMessage;
+        try {
+          payload = JSON.parse(String(event.data)) as RemoteRelayMessage;
+        } catch {
+          return;
+        }
+        if (payload.machineId && payload.machineId !== validated.machineId) return;
+
+        if (payload.type === "paired" || payload.type === "machine_status") {
+          if (payload.type === "paired") {
+            paired = true;
+            remoteReconnectAttemptRef.current = 0;
+            queryPendingStatus(socket);
+          }
+          const machineOnline = Boolean(payload.online);
+          const reaperOnline = payload.reaperOnline !== false;
+          if (machineOnline && reaperOnline) {
+            setRemoteState("online");
+            setRemoteStateMessage("Remote REAPER is online and ready.");
+          } else {
+            setRemoteState("relay-only");
+            setRemoteStateMessage(
+              String(payload.message || (
+                machineOnline
+                  ? "The Mac companion is connected, but REAPER is not ready."
+                  : "Relay connected. Waiting for the REAPER Mac companion."
+              )),
+            );
+            if (payload.type === "machine_status" && remoteRequestRef.current) {
+              clearAckTimer();
+              setReaperStatus(
+                "The remote Mac or REAPER is temporarily unavailable. The unfinished command is still being recovered; do not retry it.",
+              );
+            }
+          }
+          return;
+        }
+
+        if (payload.type === "command_status") {
+          if (!payload.requestId || payload.requestId !== remoteRequestRef.current) return;
+          clearAckTimer();
+          const duration = formatRemoteDuration(payload.actualDurationSeconds);
+          const message = String(payload.message || "Remote REAPER updated.");
+          setReaperStatus(duration && !message.includes(duration) ? `${message} Actual voice duration: ${duration}.` : message);
+          if (payload.done || payload.state === "complete" || payload.state === "error") {
+            cancelPendingRemoteCommand();
+          }
+          return;
+        }
+
+        if (payload.type === "error") {
+          clearAckTimer();
+          if (payload.requestId && payload.requestId === remoteRequestRef.current) {
+            cancelPendingRemoteCommand(String(payload.message || "The remote REAPER command failed."));
+            return;
+          }
+          if (payload.requestId) return;
+          setRemoteState("error");
+          setRemoteStateMessage(String(payload.message || "The remote relay rejected the connection."));
+          if (!paired) {
+            suppressReconnect = true;
+            socket.close(4003, "Pairing rejected");
+          }
+        }
+      });
+
+      socket.addEventListener("close", () => {
+        if (remoteSocketRef.current === socket) remoteSocketRef.current = null;
+        if (stopped) return;
+        clearAckTimer();
+        if (remoteRequestRef.current) {
+          setReaperStatus(
+            "The remote connection was interrupted. Reconnecting to recover the unfinished command; do not retry it.",
+          );
+        }
+        if (suppressReconnect) return;
+        setRemoteState("connecting");
+        setRemoteStateMessage("Remote connection interrupted. Reconnecting…");
+        const attempt = Math.min(remoteReconnectAttemptRef.current + 1, 5);
+        remoteReconnectAttemptRef.current = attempt;
+        const delay = Math.min(1000 * (2 ** (attempt - 1)), 15000);
+        reconnectTimer = window.setTimeout(connect, delay);
+      });
+
+      socket.addEventListener("error", () => {
+        setRemoteStateMessage("The relay could not be reached. Check the WSS address and tunnel.");
+      });
+    }
+
+    reconnectTimer = window.setTimeout(connect, 0);
+    return () => {
+      stopped = true;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+      clearAckTimer();
+      if (remoteCompletionTimerRef.current !== null) {
+        window.clearTimeout(remoteCompletionTimerRef.current);
+        remoteCompletionTimerRef.current = null;
+      }
+      const socket = remoteSocketRef.current;
+      remoteSocketRef.current = null;
+      if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "Settings changed");
+    };
+  }, [armRemoteCompletionTimer, cancelPendingRemoteCommand, reaperMode, remoteSettings, remoteConnectRevision]);
 
   useEffect(() => {
     const restore = window.setTimeout(() => {
@@ -639,6 +1052,125 @@ export default function Home() {
       return next;
     });
     setStatus(`${profile.label} selected. The original storyboard workflow and all REAPER controls remain available.`);
+  }
+
+  function saveRemotePreference(mode: ReaperConnectionMode, nextSettings: RemoteReaperSettings) {
+    localStorage.setItem(REMOTE_REAPER_STORAGE_KEY, JSON.stringify({
+      mode,
+      settings: nextSettings,
+    }));
+  }
+
+  function confirmPendingRemoteCancellation(change: string) {
+    if (!remoteRequestRef.current) return true;
+    return window.confirm(
+      `${change} will stop recovery of the unfinished remote command. Its outcome may still be unknown in REAPER. Continue only after checking the Mac.`,
+    );
+  }
+
+  function chooseReaperMode(mode: ReaperConnectionMode) {
+    if (mode === reaperMode) return;
+    if (!confirmPendingRemoteCancellation("Changing the connection mode")) return;
+    const hadPending = Boolean(remoteRequestRef.current);
+    if (hadPending) cancelPendingRemoteCommand();
+    setReaperMode(mode);
+    saveRemotePreference(mode, remoteSettings);
+    if (mode === "local") {
+      setRemoteState("disconnected");
+      setRemoteStateMessage("Internet Relay is disconnected. Local and Wi-Fi controls remain available.");
+      setRunningReaperAction(null);
+      setReaperStatus(
+        hadPending
+          ? "Remote mode was disconnected while a command was unfinished. Its outcome is unknown; inspect REAPER before trying again."
+          : "Local mode selected. Open REAPER or use the REAPER-hosted Wi-Fi bridge.",
+      );
+    } else {
+      setReaperStatus(
+        hadPending
+          ? "The connection mode changed while a command was unfinished. Its outcome is unknown; inspect REAPER before trying again."
+          : "Internet Relay selected. Save the connection details and wait for Remote REAPER Online.",
+      );
+    }
+  }
+
+  function updateDraftRemoteSetting(key: keyof RemoteReaperSettings, value: string) {
+    setDraftRemoteSettings((previous) => ({ ...previous, [key]: value }));
+  }
+
+  function saveAndConnectRemote() {
+    try {
+      const validated = validateRemoteReaperSettings(draftRemoteSettings);
+      if (!confirmPendingRemoteCancellation("Saving new remote connection settings")) return;
+      const hadPending = Boolean(remoteRequestRef.current);
+      if (hadPending) cancelPendingRemoteCommand();
+      setRemoteSettings(validated);
+      setDraftRemoteSettings(validated);
+      setReaperMode("remote");
+      saveRemotePreference("remote", validated);
+      setRemoteConnectRevision((revision) => revision + 1);
+      setRemoteState("connecting");
+      setRemoteStateMessage("Connecting securely to the remote relay…");
+      setReaperStatus(
+        hadPending
+          ? "Connection settings changed while a command was unfinished. Its outcome is unknown; inspect REAPER before trying again."
+          : "Connecting to the remote REAPER computer…",
+      );
+    } catch (error) {
+      setRemoteState("error");
+      setRemoteStateMessage(error instanceof Error ? error.message : "Check the remote connection settings.");
+    }
+  }
+
+  function createNewPairingToken() {
+    updateDraftRemoteSetting("pairingToken", generatePairingToken());
+    setShowPairingToken(true);
+    setRemoteStateMessage("New pairing token created. Put the same token in the Mac companion.");
+  }
+
+  function removeRemotePairingToken() {
+    if (!confirmPendingRemoteCancellation("Removing the pairing token")) return;
+    const hadPending = Boolean(remoteRequestRef.current);
+    if (hadPending) cancelPendingRemoteCommand();
+    const cleared = { ...remoteSettings, pairingToken: "" };
+    setRemoteSettings(cleared);
+    setDraftRemoteSettings((previous) => ({ ...previous, pairingToken: "" }));
+    setReaperMode("local");
+    saveRemotePreference("local", cleared);
+    setRemoteState("disconnected");
+    setRemoteStateMessage("Pairing token removed from this browser.");
+    setReaperStatus(
+      hadPending
+        ? "Pairing was removed while a command was unfinished. Its outcome is unknown; inspect REAPER before trying again."
+        : "Remote pairing removed. Local REAPER controls remain available.",
+    );
+  }
+
+  function downloadRemoteCompanionConfig() {
+    try {
+      const validated = validateRemoteReaperSettings({
+        ...draftRemoteSettings,
+        relayUrl: draftRemoteSettings.relayUrl.trim() || "ws://127.0.0.1:8787",
+      });
+      const contents = [
+        `REAPER_RELAY_URL=${JSON.stringify(validated.relayUrl)}`,
+        `REAPER_MACHINE_ID=${validated.machineId}`,
+        `REAPER_PAIRING_TOKEN=${JSON.stringify(validated.pairingToken)}`,
+        "REAPER_BASE_URL=http://127.0.0.1:8089",
+        'CUE_ASSET_PATH="/Volumes/Extreme SSD/pocket fm/france/tool test/ai mastering training/ai mastering training.RPP"',
+        "ALLOW_PAID_VOICE_GENERATION=false",
+        "",
+      ].join("\n");
+      const blob = new Blob([contents], { type: "text/plain" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = ".env";
+      link.click();
+      URL.revokeObjectURL(link.href);
+      setRemoteStateMessage("Mac companion configuration downloaded. It does not contain any ElevenLabs key.");
+    } catch (error) {
+      setRemoteState("error");
+      setRemoteStateMessage(error instanceof Error ? error.message : "Complete the remote connection settings first.");
+    }
   }
 
   function updateDraftProvider(key: keyof ProviderConfig, value: string) {
@@ -855,6 +1387,65 @@ export default function Home() {
     URL.revokeObjectURL(link.href);
   }
 
+  function sendRemoteReaperCommand(action: ReaperAction) {
+    const socket = remoteSocketRef.current;
+    if (remoteState !== "online" || !socket || socket.readyState !== WebSocket.OPEN) {
+      setReaperStatus("Remote REAPER is not ready. Connect the relay and start the Mac companion with a dedicated story project open.");
+      return;
+    }
+    if (action.id === "build-play") {
+      const approved = window.confirm(
+        "Build Immersive & Play will use the ElevenLabs account stored on the REAPER computer. Continue with paid voice generation?",
+      );
+      if (!approved) {
+        setReaperStatus("Remote build cancelled before using ElevenLabs credits.");
+        return;
+      }
+    }
+
+    const requestId = generateRequestId();
+    if (remoteRequestRef.current) {
+      setReaperStatus("An earlier remote command is still being recovered. Do not retry it until REAPER reports its result.");
+      return;
+    }
+    const pending: PendingRemoteCommand = {
+      requestId,
+      machineId: remoteSettings.machineId,
+      action: action.id,
+      createdAt: Date.now(),
+    };
+    try {
+      sessionStorage.setItem(REMOTE_PENDING_STORAGE_KEY, JSON.stringify(pending));
+    } catch {
+      setReaperStatus("This browser could not save remote recovery state, so the command was not sent.");
+      return;
+    }
+    remoteRequestRef.current = requestId;
+    remotePendingRef.current = pending;
+    setRunningReaperAction(action.id);
+    setReaperStatus(`Sending “${action.label}” securely to the remote REAPER computer…`);
+    try {
+      socket.send(JSON.stringify({
+        type: "command",
+        version: REMOTE_PROTOCOL_VERSION,
+        requestId,
+        machineId: remoteSettings.machineId,
+        action: action.id,
+        script: action.id === "story-importer" || action.id === "build-play" ? output : "",
+        runtimeMinutes: settings.runtimeMinutes,
+      }));
+    } catch {
+      cancelPendingRemoteCommand("The remote socket closed before the command could be sent. Reconnect and try again.");
+      return;
+    }
+    if (remoteAckTimerRef.current !== null) window.clearTimeout(remoteAckTimerRef.current);
+    remoteAckTimerRef.current = window.setTimeout(() => {
+      if (remoteRequestRef.current !== requestId) return;
+      cancelPendingRemoteCommand("The relay did not acknowledge the command. Nothing was resent automatically; check the companion before trying again.");
+    }, 15000);
+    armRemoteCompletionTimer(pending);
+  }
+
   async function sendReaperCommand(action: ReaperAction) {
     if (action.id === "story-importer" || action.id === "build-play") {
       if (!output.trim()) {
@@ -872,6 +1463,11 @@ export default function Home() {
         script: output,
         runtimeMinutes: settings.runtimeMinutes,
       }, "*");
+      return;
+    }
+
+    if (reaperMode === "remote") {
+      sendRemoteReaperCommand(action);
       return;
     }
 
@@ -1058,11 +1654,137 @@ export default function Home() {
       <section className="panel reaper-panel" aria-labelledby="reaper-heading">
         <div className="reaper-heading">
           <div>
-            <p className="reaper-kicker">LOCAL REAPER CONTROL</p>
+            <p className="reaper-kicker">REAPER CONNECTION</p>
             <h2 id="reaper-heading">4. Send the next step to REAPER</h2>
-            <p>On this Mac, the buttons call REAPER directly. On another device, open the Wi‑Fi Bridge URL served by REAPER; no remote clipboard is needed.</p>
+            <p>
+              {isEmbeddedBridge
+                ? "This studio is running inside the REAPER-hosted bridge, which has priority over other connection settings."
+                : reaperMode === "remote"
+                  ? "Use the secure Node relay to reach the paired REAPER Mac from mobile data or another network."
+                  : "On this Mac, the buttons call REAPER directly. The existing REAPER Wi-Fi bridge remains available."}
+            </p>
           </div>
-          <span className="local-badge">LOCAL + SAME WI‑FI</span>
+          <span className={`local-badge ${remoteState === "online" ? "online" : ""}`}>
+            {isEmbeddedBridge
+              ? "REAPER WI-FI BRIDGE"
+              : reaperMode === "local"
+                ? "LOCAL + SAME WI-FI"
+                : remoteState === "online"
+                  ? "REMOTE REAPER ONLINE"
+                  : remoteState === "relay-only"
+                    ? "MAC / REAPER OFFLINE"
+                    : remoteState === "connecting"
+                      ? "REMOTE CONNECTING"
+                      : "INTERNET RELAY"}
+          </span>
+        </div>
+        <div className="reaper-connection">
+          <div className="connection-tabs" role="tablist" aria-label="REAPER connection type">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={isEmbeddedBridge || reaperMode === "local"}
+              className={isEmbeddedBridge || reaperMode === "local" ? "active" : ""}
+              onClick={() => chooseReaperMode("local")}
+              disabled={isEmbeddedBridge}
+            >
+              Local / Wi-Fi
+              <small>Current bridge and localhost controls</small>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!isEmbeddedBridge && reaperMode === "remote"}
+              className={!isEmbeddedBridge && reaperMode === "remote" ? "active remote" : ""}
+              onClick={() => chooseReaperMode("remote")}
+              disabled={isEmbeddedBridge}
+            >
+              Internet Relay
+              <small>Node companion · different networks</small>
+            </button>
+          </div>
+
+          {isEmbeddedBridge ? (
+            <div className="bridge-priority">
+              <span className="connection-dot online" />
+              <div><strong>REAPER-hosted bridge active</strong><small>The storyboard and existing action buttons continue through this bridge.</small></div>
+            </div>
+          ) : reaperMode === "remote" ? (
+            <div className="remote-reaper-form">
+              <div className="remote-route" aria-label="Remote REAPER connection route">
+                <span>Online Studio</span>
+                <b aria-hidden="true">→</b>
+                <span>Secure WSS Relay</span>
+                <b aria-hidden="true">→</b>
+                <span>Node Companion on Mac</span>
+                <b aria-hidden="true">→</b>
+                <span>REAPER</span>
+              </div>
+              <div className="remote-fields">
+                <label>
+                  Secure relay URL
+                  <input
+                    value={draftRemoteSettings.relayUrl}
+                    onChange={(event) => updateDraftRemoteSetting("relayUrl", event.target.value)}
+                    placeholder="wss://your-relay.example.com"
+                    inputMode="url"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    maxLength={2048}
+                  />
+                </label>
+                <label>
+                  REAPER machine ID
+                  <input
+                    value={draftRemoteSettings.machineId}
+                    onChange={(event) => updateDraftRemoteSetting("machineId", event.target.value)}
+                    placeholder="sruthin-studio"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    maxLength={64}
+                  />
+                </label>
+                <label>
+                  Pairing token
+                  <div className="secret-field">
+                    <input
+                      type={showPairingToken ? "text" : "password"}
+                      value={draftRemoteSettings.pairingToken}
+                      onChange={(event) => updateDraftRemoteSetting("pairingToken", event.target.value)}
+                      placeholder="Same private token as the Mac companion"
+                      autoComplete="off"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      maxLength={256}
+                    />
+                    <button type="button" onClick={() => setShowPairingToken((visible) => !visible)}>
+                      {showPairingToken ? "Hide" : "Show"}
+                    </button>
+                  </div>
+                </label>
+              </div>
+              <div className="remote-connection-footer">
+                <div className={`remote-presence ${remoteState}`}>
+                  <span className={`connection-dot ${remoteState === "online" ? "online" : ""}`} />
+                  <div><strong>{remoteState === "online" ? "Remote REAPER Online" : "Remote connection"}</strong><small>{remoteStateMessage}</small></div>
+                </div>
+                <div className="remote-buttons">
+                  <button type="button" className="token-button" onClick={createNewPairingToken}>New token</button>
+                  {remoteSettings.pairingToken && <button type="button" className="token-button danger" onClick={removeRemotePairingToken}>Remove token</button>}
+                  <button type="button" className="token-button" onClick={downloadRemoteCompanionConfig}>Download config</button>
+                  <button type="button" className="connect-button" onClick={saveAndConnectRemote}>Save &amp; Connect</button>
+                </div>
+              </div>
+              <a className="download-companion" href="/story-cue-reaper-remote.zip" download>Download the Node.js Mac companion package →</a>
+              <p className="remote-safety">Safety requirement: open a separate saved storyboard project and run <code>Enable Story Cue Studio Remote Target.lua</code>. The companion will refuse the master cue project.</p>
+              <p className="remote-privacy">The pairing token is saved on this browser until you remove it, sent only during secure WSS pairing, and included when you download the Mac configuration. ElevenLabs credentials and generated audio remain on the REAPER Mac.</p>
+            </div>
+          ) : (
+            <div className="local-connection-summary">
+              <span className="connection-dot online" />
+              <div><strong>Original local workflow retained</strong><small>Use localhost on this Mac or open the existing REAPER-hosted Wi-Fi bridge.</small></div>
+            </div>
+          )}
         </div>
         <div className="reaper-actions">
           {reaperActions.map((action, index) => (

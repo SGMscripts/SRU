@@ -40,6 +40,9 @@ test("server-renders the Story Cue Studio demo controls", async () => {
   assert.match(html, /maximum one new cue/i);
   assert.match(html, /Music stays on MUSIC POD/);
   assert.match(html, /Send the next step to REAPER/);
+  assert.match(html, /Local \/ Wi-Fi/);
+  assert.match(html, /Internet Relay/);
+  assert.match(html, /Node companion · different networks/);
 });
 
 test("wires runtime selection and the same strict cue-bank policy into local and API generation", async () => {
@@ -56,6 +59,22 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(page, /enforceTrainingCueBank\(optimized\)/);
   assert.match(page, /enforceTrainingCueBank\(locallyRanged\)/);
   assert.match(page, /Training Cue Bank · Demo Lock/);
+  assert.match(page, /REMOTE_REAPER_STORAGE_KEY/);
+  assert.match(page, /Internet relay URLs must begin with wss:\/\//);
+  assert.match(page, /role:\s*"controller"/);
+  assert.match(page, /type:\s*"command"/);
+  assert.match(page, /action:\s*action\.id/);
+  assert.match(page, /cancelPendingRemoteCommand/);
+  assert.match(page, /remoteCompletionTimerRef/);
+  assert.match(page, /suppressReconnect/);
+  assert.match(page, /REMOTE_PENDING_STORAGE_KEY/);
+  assert.match(page, /sessionStorage\.setItem/);
+  assert.match(page, /type:\s*"status_query"/);
+  assert.match(page, /story-cue-reaper-remote\.zip/);
+  assert.ok(
+    page.indexOf('if (window.parent !== window)') < page.indexOf('if (reaperMode === "remote")'),
+    "the existing embedded REAPER bridge must keep priority over remote mode",
+  );
 
   assert.match(route, /settings\.trainingCueBank !== false/);
   assert.match(route, /runtimeProfile\(settings\.runtimeMinutes\)/);

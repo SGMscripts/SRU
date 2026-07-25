@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/remote-reaper/node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -30,6 +31,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!remote-reaper/.env.example
 
 # vercel
 .vercel
