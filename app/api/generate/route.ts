@@ -317,6 +317,11 @@ async function providerText(ai: Required<AIRequest>, instructions: string, input
 function generationInstructions(settings: Record<string, unknown>) {
   const lead = settings.useMe ? "You" : String(settings.lead || "Lead");
   const rival = String(settings.rival || "Rival");
+  const elevenModel = String(settings.elevenModel || "eleven_multilingual_v2");
+  const performanceTaste = String(settings.performanceTaste || "cinematic");
+  const narratorVoiceId = String(settings.narratorVoiceId || "").trim();
+  const leadVoiceId = String(settings.leadVoiceId || "").trim();
+  const rivalVoiceId = String(settings.rivalVoiceId || "").trim();
   const musicCueCount = Math.max(1, Math.min(20, Number(settings.musicCueCount) || 7));
   const optimizeCues = settings.optimizeCues !== false;
   const ambientRanges = settings.ambientRanges !== false;
@@ -331,7 +336,13 @@ Runtime and story:
 Cast and format:
 - Use only Narrator plus exactly two speaking characters: ${lead} and ${rival}.
 - Narrator must never speak character dialogue.
-- Put every spoken passage immediately after one [VOICE: speaker=... | type=... | emotion=... | intensity=0-3 | delivery=... | pace=...] directive.
+- Direct the performances in a ${performanceTaste} style. Keep acting choices varied and appropriate to the moment rather than applying one emotion everywhere.
+- Put every spoken passage immediately after one [VOICE: speaker=... | type=... | emotion=... | intensity=0-3 | delivery=... | pace=... | voice_id=... | model_id=${elevenModel} | performance_taste=${performanceTaste}] directive.
+- Use these exact voice assignments in every matching directive:
+  Narrator voice_id=${narratorVoiceId || "(leave empty)"}
+  ${lead} voice_id=${leadVoiceId || "(leave empty)"}
+  ${rival} voice_id=${rivalVoiceId || "(leave empty)"}
+- Never invent, shorten, or swap a voice_id. Use model_id=${elevenModel} for every speaker.
 - Use [AMBIENT:], [MUSIC:], and [SFX:] directives for sound design. Put each directive on its own line.
 - Use ${Number(settings.places) === 1 ? "one sound location" : "no more than two sound locations"}.
 - Never place more than two SFX directives between spoken passages.

@@ -11,6 +11,11 @@ type Settings = {
   musicCueCount: number;
   optimizeCues: boolean;
   ambientRanges: boolean;
+  elevenModel: string;
+  performanceTaste: string;
+  narratorVoiceId: string;
+  leadVoiceId: string;
+  rivalVoiceId: string;
 };
 
 type AIProvider = "openai" | "gemini" | "compatible";
@@ -33,7 +38,7 @@ type ReaperAction = {
   label: string;
   description: string;
   command: string;
-  tone: "lime" | "orange" | "blue";
+  tone: "lime" | "orange" | "blue" | "purple";
 };
 
 type ExpansionBeat = {
@@ -49,7 +54,22 @@ type ExpansionBeat = {
 const MIN_SPOKEN_WORDS = 1050;
 const WORDS_PER_MINUTE = 145;
 const AI_STORAGE_KEY = "story-cue-studio-ai-settings-v1";
+const VOICE_STORAGE_KEY = "story-cue-studio-voice-settings-v1";
 const CUE_TAG_PATTERN = /^\s*\[(SFX|AMBIENT|MUSIC):\s*(.*?)\]\s*$/i;
+
+const elevenModels = [
+  { id: "eleven_multilingual_v2", label: "Multilingual v2 · stable long-form" },
+  { id: "eleven_v3", label: "Eleven v3 · most expressive" },
+  { id: "eleven_flash_v2_5", label: "Flash v2.5 · fastest" },
+];
+
+const performanceTastes = [
+  { id: "cinematic", label: "Cinematic · controlled tension and dynamic turns" },
+  { id: "natural", label: "Natural · conversational and grounded" },
+  { id: "intimate", label: "Intimate · close, quiet and emotionally detailed" },
+  { id: "dramatic", label: "Dramatic · bold emotion and stronger contrast" },
+  { id: "documentary", label: "Documentary · clear, restrained and factual" },
+];
 
 const defaultAISettings: AISettings = {
   provider: "openai",
@@ -85,6 +105,13 @@ const reaperActions: ReaperAction[] = [
     description: "Open the ElevenLabs voice generator for the imported character tracks.",
     command: "_RS3f041675526b507bc147e0a1002e05e5b868215a",
     tone: "blue",
+  },
+  {
+    id: "build-play",
+    label: "Build Immersive & Play",
+    description: "Import, auto-recall the best cue stacks, generate every voice, then start playback.",
+    command: "",
+    tone: "purple",
   },
 ];
 
@@ -325,6 +352,7 @@ function musicCue(index: number) {
 
 function voiceLine(
   lines: string[],
+  settings: Settings,
   speaker: string,
   type: "narration" | "dialogue",
   text: string,
@@ -332,8 +360,23 @@ function voiceLine(
   intensity = 2,
   pace = "normal",
 ) {
+  const lead = clean(settings.lead, settings.useMe ? "You" : "Lead");
+  const rival = clean(settings.rival, "Rival");
+  const voiceId = speaker === "Narrator"
+    ? settings.narratorVoiceId
+    : speaker === lead
+      ? settings.leadVoiceId
+      : speaker === rival
+        ? settings.rivalVoiceId
+        : "";
+  const tasteDelivery = settings.performanceTaste === "intimate"
+    ? "whispering"
+    : settings.performanceTaste === "dramatic" && emotion !== "neutral"
+      ? "urgent"
+      : "restrained";
+  const identity = voiceId.trim() ? ` | voice_id=${voiceId.trim()}` : "";
   lines.push(
-    `[VOICE: speaker=${speaker} | type=${type} | emotion=${emotion} | intensity=${intensity} | delivery=restrained | pace=${pace}]`,
+    `[VOICE: speaker=${speaker} | type=${type} | emotion=${emotion} | intensity=${intensity} | delivery=${tasteDelivery} | pace=${pace}${identity} | model_id=${settings.elevenModel} | performance_taste=${settings.performanceTaste}]`,
     text,
     "",
   );
@@ -384,12 +427,12 @@ function localStoryboard(story: string, settings: Settings) {
       lines.push(`[SFX: ${cue}]`);
     }
     if (isLead && /["“]/.test(text)) {
-      voiceLine(lines, lead, "dialogue", text.replace(/[“”"]/g, ""), "tension", 2);
+      voiceLine(lines, settings, lead, "dialogue", text.replace(/[“”"]/g, ""), "tension", 2);
     } else if (isRival && /["“]/.test(text)) {
-      voiceLine(lines, rival, "dialogue", text.replace(/[“”"]/g, ""), "sarcasm", 2);
+      voiceLine(lines, settings, rival, "dialogue", text.replace(/[“”"]/g, ""), "sarcasm", 2);
     } else {
       const emotion = /(fear|dark|warning|danger|locked|abandoned|missing|rain)/.test(lower) ? "tension" : /(smile|laugh|happy)/.test(lower) ? "joy" : "neutral";
-      voiceLine(lines, "Narrator", "narration", text, emotion, emotion === "neutral" ? 1 : 2);
+      voiceLine(lines, settings, "Narrator", "narration", text, emotion, emotion === "neutral" ? 1 : 2);
     }
   });
 
@@ -404,11 +447,11 @@ function localStoryboard(story: string, settings: Settings) {
       lines.push("[SFX: transition whoosh]", `[AMBIENT: ${placeTwo}${settings.ambientRanges ? " | START" : ""}]`);
     }
     lines.push(`[SFX: ${beat.sfx}]`);
-    voiceLine(lines, "Narrator", "narration", beat.narratorA(moment, lead, rival));
-    voiceLine(lines, lead, "dialogue", beat.lead, "determination", 2);
-    voiceLine(lines, "Narrator", "narration", beat.narratorB(moment, lead, rival));
-    voiceLine(lines, rival, "dialogue", beat.rival, "tension", 2);
-    voiceLine(lines, "Narrator", "narration", beat.close(moment, lead, rival));
+    voiceLine(lines, settings, "Narrator", "narration", beat.narratorA(moment, lead, rival));
+    voiceLine(lines, settings, lead, "dialogue", beat.lead, "determination", 2);
+    voiceLine(lines, settings, "Narrator", "narration", beat.narratorB(moment, lead, rival));
+    voiceLine(lines, settings, rival, "dialogue", beat.rival, "tension", 2);
+    voiceLine(lines, settings, "Narrator", "narration", beat.close(moment, lead, rival));
     beatIndex += 1;
   }
 
@@ -438,6 +481,11 @@ export default function Home() {
     musicCueCount: 7,
     optimizeCues: true,
     ambientRanges: true,
+    elevenModel: "eleven_multilingual_v2",
+    performanceTaste: "cinematic",
+    narratorVoiceId: "cPoqAvGWCPfCfyPMwe4z",
+    leadVoiceId: "si0svtk05vPEuvwAW93c",
+    rivalVoiceId: "",
   });
   const [output, setOutput] = useState("");
   const [status, setStatus] = useState("Ready to shape a seven-minute story.");
@@ -476,8 +524,43 @@ export default function Home() {
     }
   }, []);
 
+  useEffect(() => {
+    function receiveBridgeStatus(event: MessageEvent) {
+      if (event.source !== window.parent) return;
+      if (!event.data || event.data.type !== "story-cue-studio:status") return;
+      setReaperStatus(String(event.data.message || "REAPER bridge updated."));
+      if (event.data.done) setRunningReaperAction(null);
+    }
+    window.addEventListener("message", receiveBridgeStatus);
+    return () => window.removeEventListener("message", receiveBridgeStatus);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(VOICE_STORAGE_KEY);
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as Partial<Settings>;
+      setSettings((previous) => ({
+        ...previous,
+        elevenModel: String(parsed.elevenModel || previous.elevenModel),
+        performanceTaste: String(parsed.performanceTaste || previous.performanceTaste),
+        narratorVoiceId: String(parsed.narratorVoiceId ?? previous.narratorVoiceId),
+        leadVoiceId: String(parsed.leadVoiceId ?? previous.leadVoiceId),
+        rivalVoiceId: String(parsed.rivalVoiceId ?? previous.rivalVoiceId),
+      }));
+    } catch {
+      localStorage.removeItem(VOICE_STORAGE_KEY);
+    }
+  }, []);
+
   function update<K extends keyof Settings>(key: K, value: Settings[K]) {
-    setSettings((previous) => ({ ...previous, [key]: value }));
+    setSettings((previous) => {
+      const next = { ...previous, [key]: value };
+      if (["elevenModel", "performanceTaste", "narratorVoiceId", "leadVoiceId", "rivalVoiceId"].includes(key)) {
+        localStorage.setItem(VOICE_STORAGE_KEY, JSON.stringify(next));
+      }
+      return next;
+    });
   }
 
   function updateDraftProvider(key: keyof ProviderConfig, value: string) {
@@ -673,11 +756,30 @@ export default function Home() {
   }
 
   async function sendReaperCommand(action: ReaperAction) {
-    if (action.id === "story-importer") {
+    if (action.id === "story-importer" || action.id === "build-play") {
       if (!output.trim()) {
         setReaperStatus("Generate a cue script before importing it.");
         return;
       }
+    }
+
+    if (window.parent !== window) {
+      setRunningReaperAction(action.id);
+      setReaperStatus(`Sending “${action.label}” through the REAPER Wi‑Fi bridge…`);
+      window.parent.postMessage({
+        type: "story-cue-studio:reaper",
+        action: action.id,
+        script: output,
+      }, "*");
+      return;
+    }
+
+    if (action.id === "build-play") {
+      setReaperStatus("For one-click immersive build, open this studio through the REAPER Wi‑Fi Bridge page. The three individual local buttons still work here.");
+      return;
+    }
+
+    if (action.id === "story-importer") {
       try {
         await navigator.clipboard.writeText(output);
       } catch {
@@ -771,6 +873,32 @@ export default function Home() {
             <button aria-pressed={settings.ambientRanges} className={`toggle ${settings.ambientRanges ? "on" : ""}`} onClick={() => update("ambientRanges", !settings.ambientRanges)}><span /></button>
           </div>
         </div>
+        <div className="voice-direction">
+          <div className="voice-direction-head">
+            <div><span>ELEVENLABS PERFORMANCE</span><strong>Choose the audio model and voice cast</strong></div>
+            <small>The API key remains inside your REAPER ElevenLabs tool.</small>
+          </div>
+          <div className="voice-select-grid">
+            <label>
+              Audio model
+              <select value={settings.elevenModel} onChange={(event) => update("elevenModel", event.target.value)}>
+                {elevenModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+              </select>
+            </label>
+            <label>
+              Performance taste
+              <select value={settings.performanceTaste} onChange={(event) => update("performanceTaste", event.target.value)}>
+                {performanceTastes.map((taste) => <option key={taste.id} value={taste.id}>{taste.label}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="voice-id-grid">
+            <label>Narrator voice ID<input value={settings.narratorVoiceId} onChange={(event) => update("narratorVoiceId", event.target.value.trim())} placeholder="ElevenLabs voice ID" /></label>
+            <label>{settings.useMe ? "You" : clean(settings.lead, "Lead")} voice ID<input value={settings.leadVoiceId} onChange={(event) => update("leadVoiceId", event.target.value.trim())} placeholder="ElevenLabs voice ID" /></label>
+            <label>{clean(settings.rival, "Second character")} voice ID<input value={settings.rivalVoiceId} onChange={(event) => update("rivalVoiceId", event.target.value.trim())} placeholder="ElevenLabs voice ID" /></label>
+          </div>
+          <p>Import creates <code>VO - Character-voiceID</code> text tracks. Generated speech remains on a separate <code>VO Audio - Character</code> track directly below.</p>
+        </div>
         <div className="cast"><span>CAST</span>{characters.map((name) => <b key={name}>{name}</b>)}<i>Narrator</i></div>
         <button className="generate" onClick={generate} disabled={generating}>{generating ? "Generating seven-minute script…" : "Generate 7+ minute cue script"} <span>→</span></button>
         <p className="status" role="status">{status}</p>
@@ -801,9 +929,9 @@ export default function Home() {
           <div>
             <p className="reaper-kicker">LOCAL REAPER CONTROL</p>
             <h2 id="reaper-heading">4. Send the next step to REAPER</h2>
-            <p>Keep REAPER open. Import Story copies this output and sends it straight to the importer—no file picker.</p>
+            <p>On this Mac, the buttons call REAPER directly. On another device, open the Wi‑Fi Bridge URL served by REAPER; no remote clipboard is needed.</p>
           </div>
-          <span className="local-badge">127.0.0.1</span>
+          <span className="local-badge">LOCAL + SAME WI‑FI</span>
         </div>
         <div className="reaper-actions">
           {reaperActions.map((action, index) => (
