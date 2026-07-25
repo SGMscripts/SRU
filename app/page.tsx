@@ -6,11 +6,17 @@ import {
   TRAINING_CUE_BANK_META,
   type TrainingCueBankReport,
 } from "./training-cue-bank";
+import {
+  normalizeRuntimeMinutes,
+  runtimeProfile,
+  type RuntimeMinutes,
+} from "./story-runtime";
 
 type Settings = {
   title: string;
   lead: string;
   rival: string;
+  runtimeMinutes: RuntimeMinutes;
   places: number;
   useMe: boolean;
   musicCueCount: number;
@@ -57,7 +63,6 @@ type ExpansionBeat = {
   close: (moment: string, lead: string, rival: string) => string;
 };
 
-const MIN_SPOKEN_WORDS = 1050;
 const WORDS_PER_MINUTE = 145;
 const AI_STORAGE_KEY = "story-cue-studio-ai-settings-v1";
 const VOICE_STORAGE_KEY = "story-cue-studio-voice-settings-v1";
@@ -212,6 +217,37 @@ function spokenWordCount(script: string) {
     })
     .join(" ")
     .match(/[\p{L}\p{N}]+(?:['’][\p{L}\p{N}]+)*/gu)?.length || 0;
+}
+
+function limitProseWords(value: string, maximum: number) {
+  const words = value.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if (words.length <= maximum) return value;
+  return `${words.slice(0, maximum).join(" ").replace(/[,:;—-]+$/, "")}.`;
+}
+
+function fitLocalScriptToRuntime(script: string, settings: Settings) {
+  const profile = runtimeProfile(settings.runtimeMinutes);
+  if (profile.maxWords === null) return script;
+  const lines = script.split(/\r?\n/);
+  let total = spokenWordCount(script);
+  for (let index = lines.length - 1; index >= 0 && total > profile.maxWords; index -= 1) {
+    const line = lines[index].trim();
+    if (!line || line.startsWith("[") || /^EPISODE\b/i.test(line)) continue;
+    const lineWords = line.split(/\s+/).filter(Boolean);
+    const excess = total - profile.maxWords;
+    if (lineWords.length > excess + 8) {
+      const keep = lineWords.length - excess;
+      lines[index] = `${lineWords.slice(0, keep).join(" ").replace(/[,:;—-]+$/, "").replace(/[.!?]+$/, "")}.`;
+      total = profile.maxWords;
+      break;
+    }
+    if (total - lineWords.length >= profile.minWords) {
+      lines[index] = "";
+      if (/^\s*\[VOICE:/i.test(lines[index - 1] || "")) lines[index - 1] = "";
+      total -= lineWords.length;
+    }
+  }
+  return lines.join("\n").replace(/\n{4,}/g, "\n\n\n");
 }
 
 const sfxStopWords = new Set([
@@ -389,9 +425,11 @@ function voiceLine(
 }
 
 function localStoryboard(story: string, settings: Settings) {
+  const profile = runtimeProfile(settings.runtimeMinutes);
   const lead = clean(settings.lead, settings.useMe ? "You" : "Lead");
   const rival = clean(settings.rival, "Rival");
-  const sentences = story.replace(/\s+/g, " ").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [story];
+  const runtimeStory = settings.runtimeMinutes === 3 ? limitProseWords(story, 90) : story;
+  const sentences = runtimeStory.replace(/\s+/g, " ").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [runtimeStory];
   const safeMoments = sentences.map((sentence) => sentence.replace(/\[[^\]]+\]/g, "").replace(/[“”"]/g, "").trim()).filter(Boolean);
   const placeOne = inferAmbientLocation(story, "quiet interior");
   const placeTwo = inferAmbientLocation(
@@ -443,7 +481,7 @@ function localStoryboard(story: string, settings: Settings) {
   });
 
   let beatIndex = 0;
-  while (spokenWordCount(lines.join("\n")) < MIN_SPOKEN_WORDS || musicIndex < musicCueCount - 1) {
+  while (spokenWordCount(lines.join("\n")) < profile.minWords || musicIndex < musicCueCount - 1) {
     const beat = expansionBeats[beatIndex % expansionBeats.length];
     const moment = safeMoments[beatIndex % safeMoments.length] || "The situation changed before either person was ready.";
     if (musicIndex < musicCueCount - 1) lines.push(musicCue(musicIndex++));
@@ -465,7 +503,8 @@ function localStoryboard(story: string, settings: Settings) {
   if (musicIndex < musicCueCount) lines.push(musicCue(musicIndex));
   const script = lines.join("\n");
   const optimized = settings.optimizeCues ? optimizeCueScriptLocally(script) : script;
-  return settings.trainingCueBank ? enforceTrainingCueBank(optimized).script : optimized;
+  const constrained = settings.trainingCueBank ? enforceTrainingCueBank(optimized).script : optimized;
+  return fitLocalScriptToRuntime(constrained, settings);
 }
 
 function cueBankStatus(report?: TrainingCueBankReport) {
@@ -489,9 +528,10 @@ export default function Home() {
     title: "The Last Signal",
     lead: "Maya",
     rival: "Elias",
+    runtimeMinutes: 3,
     places: 2,
     useMe: false,
-    musicCueCount: 7,
+    musicCueCount: 4,
     optimizeCues: true,
     ambientRanges: true,
     trainingCueBank: true,
@@ -502,7 +542,7 @@ export default function Home() {
     rivalVoiceId: "",
   });
   const [output, setOutput] = useState("");
-  const [status, setStatus] = useState("Ready to shape a seven-minute story.");
+  const [status, setStatus] = useState("Ready to shape a three-minute demo or a seven-minute episode.");
   const [copied, setCopied] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
@@ -519,6 +559,7 @@ export default function Home() {
   const outputMinutes = outputWords ? (outputWords / WORDS_PER_MINUTE).toFixed(1) : "0.0";
   const activeProviderConfig = aiSettings[aiSettings.provider];
   const draftProviderConfig = draftAISettings[draftAISettings.provider];
+  const selectedRuntime = runtimeProfile(settings.runtimeMinutes);
 
   useEffect(() => {
     const restore = window.setTimeout(() => {
@@ -558,8 +599,11 @@ export default function Home() {
         const saved = localStorage.getItem(VOICE_STORAGE_KEY);
         if (!saved) return;
         const parsed = JSON.parse(saved) as Partial<Settings>;
+        const restoredRuntime = normalizeRuntimeMinutes(parsed.runtimeMinutes);
         setSettings((previous) => ({
           ...previous,
+          runtimeMinutes: restoredRuntime,
+          musicCueCount: Number(parsed.musicCueCount) || runtimeProfile(restoredRuntime).defaultMusicCues,
           elevenModel: String(parsed.elevenModel || previous.elevenModel),
           performanceTaste: String(parsed.performanceTaste || previous.performanceTaste),
           narratorVoiceId: String(parsed.narratorVoiceId ?? previous.narratorVoiceId),
@@ -576,11 +620,25 @@ export default function Home() {
   function update<K extends keyof Settings>(key: K, value: Settings[K]) {
     setSettings((previous) => {
       const next = { ...previous, [key]: value };
-      if (["elevenModel", "performanceTaste", "narratorVoiceId", "leadVoiceId", "rivalVoiceId"].includes(key)) {
+      if (["runtimeMinutes", "musicCueCount", "elevenModel", "performanceTaste", "narratorVoiceId", "leadVoiceId", "rivalVoiceId"].includes(key)) {
         localStorage.setItem(VOICE_STORAGE_KEY, JSON.stringify(next));
       }
       return next;
     });
+  }
+
+  function chooseRuntime(runtimeMinutes: RuntimeMinutes) {
+    const profile = runtimeProfile(runtimeMinutes);
+    setSettings((previous) => {
+      const next = {
+        ...previous,
+        runtimeMinutes,
+        musicCueCount: profile.defaultMusicCues,
+      };
+      localStorage.setItem(VOICE_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+    setStatus(`${profile.label} selected. The original storyboard workflow and all REAPER controls remain available.`);
   }
 
   function updateDraftProvider(key: keyof ProviderConfig, value: string) {
@@ -633,13 +691,13 @@ export default function Home() {
       return;
     }
     setGenerating(true);
-    setStatus(`Building a seven-minute script with ${activeProviderConfig.apiKey ? providerLabels[aiSettings.provider] : "the local generator"}…`);
+    setStatus(`Building a ${selectedRuntime.label} with ${activeProviderConfig.apiKey ? providerLabels[aiSettings.provider] : "the local generator"}…`);
     const fallback = localStoryboard(story, settings);
     if (!activeProviderConfig.apiKey.trim()) {
       setOutput(fallback);
       const words = spokenWordCount(fallback);
       const bank = settings.trainingCueBank ? enforceTrainingCueBank(fallback).report : undefined;
-      setStatus(`Local seven-minute script created: ${words.toLocaleString()} spoken words, about ${(words / WORDS_PER_MINUTE).toFixed(1)} minutes.${cueBankStatus(bank)} Add an AI key for a richer adaptation.`);
+      setStatus(`Local ${selectedRuntime.label} created: ${words.toLocaleString()} spoken words, about ${(words / WORDS_PER_MINUTE).toFixed(1)} minutes.${cueBankStatus(bank)} Add an AI key for a richer adaptation.`);
       setGenerating(false);
       return;
     }
@@ -672,7 +730,7 @@ export default function Home() {
     } catch (error) {
       setOutput(fallback);
       const message = error instanceof Error ? error.message : "AI generation failed.";
-      setStatus(`${message} A seven-minute local version was created instead.`);
+      setStatus(`${message} A local ${selectedRuntime.label} was created instead.`);
     } finally {
       setGenerating(false);
     }
@@ -812,6 +870,7 @@ export default function Home() {
         type: "story-cue-studio:reaper",
         action: action.id,
         script: output,
+        runtimeMinutes: settings.runtimeMinutes,
       }, "*");
       return;
     }
@@ -875,8 +934,8 @@ export default function Home() {
         </button>
       </div>
       <h1>Story Cue Studio</h1>
-      <p className="subhead">Turn a plain story into a seven-minute, two-character audio drama with narration, acting direction, ambience, music, and clean sound cues.</p>
-      <div className="promise"><span>01</span> 7+ minute runtime <span>02</span> Narrator never speaks dialogue <span>03</span> Two character voices <span>04</span> Maximum two SFX per gap</div>
+      <p className="subhead">Turn a plain story into either a fast three-minute demo or the complete seven-minute storyboard, with full-cast narration, acting direction, ambience, music, and clean sound cues.</p>
+      <div className="promise"><span>01</span> 3 or 7+ minutes <span>02</span> Original storyboard retained <span>03</span> Full character voices <span>04</span> Maximum two SFX per gap</div>
     </section>
 
     <section className="workspace">
@@ -889,6 +948,29 @@ export default function Home() {
       <div className="panel director-panel">
         <h2>2. Direct the adaptation</h2>
         <label>Episode title<input value={settings.title} onChange={(event) => update("title", event.target.value)} /></label>
+        <fieldset className="runtime-fieldset">
+          <legend>Episode runtime</legend>
+          <div className="runtime-options">
+            <button
+              type="button"
+              className={`runtime-option ${settings.runtimeMinutes === 3 ? "active" : ""}`}
+              aria-pressed={settings.runtimeMinutes === 3}
+              onClick={() => chooseRuntime(3)}
+            >
+              <strong>3-minute demo</strong>
+              <small>About 435 words · 4 music cues · full cast</small>
+            </button>
+            <button
+              type="button"
+              className={`runtime-option ${settings.runtimeMinutes === 7 ? "active" : ""}`}
+              aria-pressed={settings.runtimeMinutes === 7}
+              onClick={() => chooseRuntime(7)}
+            >
+              <strong>7+ minute storyboard</strong>
+              <small>Original 1,050+ word workflow · 7 music cues</small>
+            </button>
+          </div>
+        </fieldset>
         <div className="toggle-row"><div><strong>Make me the lead</strong><small>Use “You” as the main character</small></div><button aria-pressed={settings.useMe} className={`toggle ${settings.useMe ? "on" : ""}`} onClick={() => update("useMe", !settings.useMe)}><span /></button></div>
         <div className="field-grid">
           <label>Main lead<input disabled={settings.useMe} value={settings.useMe ? "You" : settings.lead} onChange={(event) => update("lead", event.target.value)} /></label>
@@ -949,7 +1031,7 @@ export default function Home() {
           <p>Import creates <code>VO - Character-voiceID</code> text tracks. Generated speech remains on a separate <code>VO Audio - Character</code> track directly below.</p>
         </div>
         <div className="cast"><span>CAST</span>{characters.map((name) => <b key={name}>{name}</b>)}<i>Narrator</i></div>
-        <button className="generate" onClick={generate} disabled={generating}>{generating ? "Generating seven-minute script…" : "Generate 7+ minute cue script"} <span>→</span></button>
+        <button className="generate" onClick={generate} disabled={generating}>{generating ? `Generating ${selectedRuntime.shortLabel}…` : `Generate ${selectedRuntime.label}`} <span>→</span></button>
         <p className="status" role="status">{status}</p>
       </div>
 
@@ -957,7 +1039,7 @@ export default function Home() {
         <div className="panel-head">
           <div>
             <h2>3. REAPER-ready output</h2>
-            <p>{output ? `${outputWords.toLocaleString()} spoken words · about ${outputMinutes} minutes` : "Minimum target: 1,050 spoken words."}</p>
+            <p>{output ? `${outputWords.toLocaleString()} spoken words · about ${outputMinutes} minutes` : settings.runtimeMinutes === 3 ? "Target: 420–470 spoken words." : "Minimum target: 1,050 spoken words."}</p>
           </div>
           {output && <div className="actions">
             <button className="range" onClick={() => void applyAmbientCueRanges()} disabled={ranging}>
@@ -970,7 +1052,7 @@ export default function Home() {
             <button className="download" onClick={download}>Download .txt</button>
           </div>}
         </div>
-        {output ? <pre>{output}</pre> : <div className="empty"><div className="terminal-mark">›_</div><h3>Your seven-minute production script appears here.</h3><p>It will include structured voice directions and cue tracks, ready for your REAPER pipeline.</p></div>}
+        {output ? <pre>{output}</pre> : <div className="empty"><div className="terminal-mark">›_</div><h3>Your selected production storyboard appears here.</h3><p>Choose three minutes or the original seven-minute format. Both include structured voice directions and cue tracks for REAPER.</p></div>}
       </div>
 
       <section className="panel reaper-panel" aria-labelledby="reaper-heading">

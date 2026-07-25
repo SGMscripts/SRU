@@ -30,7 +30,10 @@ test("server-renders the Story Cue Studio demo controls", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>Story Cue Studio<\/title>/i);
-  assert.match(html, /Generate 7\+ minute cue script/);
+  assert.match(html, /3-minute demo/);
+  assert.match(html, /7\+ minute storyboard/);
+  assert.match(html, /Generate 3-minute demo/);
+  assert.match(html, /Original storyboard retained/);
   assert.match(html, /Training Cue Bank · Demo Lock/);
   assert.match(html, /388(?:<!-- -->)? exact SFX/);
   assert.match(html, /78(?:<!-- -->)? exact Ambient/);
@@ -39,7 +42,7 @@ test("server-renders the Story Cue Studio demo controls", async () => {
   assert.match(html, /Send the next step to REAPER/);
 });
 
-test("wires the same strict cue-bank policy into local and API generation", async () => {
+test("wires runtime selection and the same strict cue-bank policy into local and API generation", async () => {
   const [page, route, layout] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/generate/route.ts", import.meta.url), "utf8"),
@@ -47,11 +50,16 @@ test("wires the same strict cue-bank policy into local and API generation", asyn
   ]);
 
   assert.match(page, /trainingCueBank:\s*true/);
+  assert.match(page, /runtimeMinutes:\s*3/);
+  assert.match(page, /runtimeMinutes:\s*settings\.runtimeMinutes/);
+  assert.match(page, /chooseRuntime\(7\)/);
   assert.match(page, /enforceTrainingCueBank\(optimized\)/);
   assert.match(page, /enforceTrainingCueBank\(locallyRanged\)/);
   assert.match(page, /Training Cue Bank · Demo Lock/);
 
   assert.match(route, /settings\.trainingCueBank !== false/);
+  assert.match(route, /runtimeProfile\(settings\.runtimeMinutes\)/);
+  assert.match(route, /runtimeWordIssue\(words, profile\.minutes\)/);
   assert.match(route, /trainingCueBankInstructions\(\)/);
   assert.match(route, /enforceTrainingCueBank\(script\)/);
   assert.match(route, /cueBank/);

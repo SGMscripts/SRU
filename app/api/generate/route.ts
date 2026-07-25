@@ -3,6 +3,10 @@ import {
   enforceTrainingCueBank,
   trainingCueBankInstructions,
 } from "../../training-cue-bank";
+import {
+  runtimeProfile,
+  runtimeWordIssue,
+} from "../../story-runtime";
 
 type Provider = "openai" | "gemini" | "compatible";
 
@@ -23,8 +27,6 @@ type CueRequest = {
   nextText: string;
 };
 
-const MIN_SPOKEN_WORDS = 1050;
-const TARGET_SPOKEN_WORDS = "1,100–1,250";
 const TRUSTED_COMPATIBLE_HOSTS = new Set([
   "openrouter.ai",
   "api.openrouter.ai",
@@ -326,6 +328,7 @@ async function providerText(ai: Required<AIRequest>, instructions: string, input
 }
 
 function generationInstructions(settings: Record<string, unknown>) {
+  const profile = runtimeProfile(settings.runtimeMinutes);
   const lead = settings.useMe ? "You" : String(settings.lead || "Lead");
   const rival = String(settings.rival || "Rival");
   const elevenModel = String(settings.elevenModel || "eleven_multilingual_v2");
@@ -333,15 +336,16 @@ function generationInstructions(settings: Record<string, unknown>) {
   const narratorVoiceId = String(settings.narratorVoiceId || "").trim();
   const leadVoiceId = String(settings.leadVoiceId || "").trim();
   const rivalVoiceId = String(settings.rivalVoiceId || "").trim();
-  const musicCueCount = Math.max(1, Math.min(20, Number(settings.musicCueCount) || 7));
+  const musicCueCount = Math.max(1, Math.min(20, Number(settings.musicCueCount) || profile.defaultMusicCues));
   const optimizeCues = settings.optimizeCues !== false;
   const ambientRanges = settings.ambientRanges !== false;
   const trainingCueBank = settings.trainingCueBank !== false;
   return `Convert the supplied prose into a complete REAPER PodcastVoice audio-drama cue script.
 
 Runtime and story:
-- Write ${TARGET_SPOKEN_WORDS} spoken words, excluding every directive and the episode-title line.
-- Never return fewer than ${MIN_SPOKEN_WORDS} spoken words. This is required for at least seven minutes at normal narration speed.
+- Create the ${profile.label}.
+- Aim for ${profile.targetWords} spoken words, excluding every directive and the episode-title line.
+- Never return fewer than ${profile.minWords} spoken words.${profile.maxWords === null ? " This is required for at least seven minutes at normal narration speed." : ` Never return more than ${profile.maxWords} spoken words; the short version must remain a genuine three-minute demo.`}
 - Expand short source material into a coherent setup, escalation, reversal, climax, and resolution.
 - Preserve the source premise and important facts. Add meaningful scenes, action, sensory detail, decisions, and consequences; do not pad by repeating sentences.
 
@@ -427,21 +431,24 @@ export async function POST(request: Request) {
 
     const story = String(body.story || "").trim();
     if (!story) return NextResponse.json({ mode: "error", error: "Paste a story first." }, { status: 400 });
+    const profile = runtimeProfile(settings.runtimeMinutes);
     const input = `Title: ${String(settings.title || "Untitled")}
+Runtime: ${profile.label}
 Places: ${Number(settings.places) || 2}
 Source story:
 ${story}`;
     let script = cleanScript(await providerText(ai, generationInstructions(settings), input));
     let words = spokenWordCount(script);
-    const requestedMusicCues = Math.max(1, Math.min(20, Number(settings.musicCueCount) || 7));
+    const requestedMusicCues = Math.max(1, Math.min(20, Number(settings.musicCueCount) || profile.defaultMusicCues));
     let musicCues = countCueType(script, "MUSIC");
     const ambientRanges = settings.ambientRanges !== false;
     let ambientStarts = script.split(/\r?\n/).filter((line) => /^\s*\[AMBIENT:.*\|\s*START\s*\]\s*$/i.test(line)).length;
     let ambientEnds = script.split(/\r?\n/).filter((line) => /^\s*\[AMBIENT:.*\|\s*END\s*\]\s*$/i.test(line)).length;
 
-    if (words < MIN_SPOKEN_WORDS || musicCues !== requestedMusicCues || (ambientRanges && (ambientStarts === 0 || ambientStarts !== ambientEnds))) {
+    let wordIssue = runtimeWordIssue(words, profile.minutes);
+    if (wordIssue || musicCues !== requestedMusicCues || (ambientRanges && (ambientStarts === 0 || ambientStarts !== ambientEnds))) {
       const issues = [
-        words < MIN_SPOKEN_WORDS ? `only ${words} spoken words` : "",
+        wordIssue,
         musicCues !== requestedMusicCues ? `${musicCues} MUSIC cues instead of exactly ${requestedMusicCues}` : "",
         ambientRanges && (ambientStarts === 0 || ambientStarts !== ambientEnds)
           ? `${ambientStarts} Ambient START cues and ${ambientEnds} Ambient END cues; every location needs one matching pair`
@@ -449,6 +456,7 @@ ${story}`;
       ].filter(Boolean).join("; ");
       script = cleanScript(await providerText(ai, repairInstructions(settings, issues), `Draft to replace:\n\n${script}`));
       words = spokenWordCount(script);
+      wordIssue = runtimeWordIssue(words, profile.minutes);
       musicCues = countCueType(script, "MUSIC");
       ambientStarts = script.split(/\r?\n/).filter((line) => /^\s*\[AMBIENT:.*\|\s*START\s*\]\s*$/i.test(line)).length;
       ambientEnds = script.split(/\r?\n/).filter((line) => /^\s*\[AMBIENT:.*\|\s*END\s*\]\s*$/i.test(line)).length;
@@ -459,10 +467,10 @@ ${story}`;
       script = constrained.script;
       cueBank = constrained.report;
     }
-    if (words < MIN_SPOKEN_WORDS) {
+    if (wordIssue) {
       return NextResponse.json({
         mode: "error",
-        error: `The selected model returned only ${words} spoken words after a retry. Choose a stronger model or increase its output limit.`,
+        error: `The selected model returned ${words} spoken words after a retry, outside the ${profile.label} requirement. Choose a stronger model or try again.`,
       }, { status: 502 });
     }
     if (musicCues !== requestedMusicCues) {
