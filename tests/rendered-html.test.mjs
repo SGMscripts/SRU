@@ -81,6 +81,7 @@ test("server-renders the Story Cue Studio demo controls", async () => {
   assert.match(html, /Internet Relay/);
   assert.match(html, /Node companion · different networks/);
   assert.match(html, /Make me the lead/);
+  assert.match(html, /Your name/);
   assert.match(html, /Search voices/);
   assert.match(html, /Advanced: enter a voice ID manually/);
 });

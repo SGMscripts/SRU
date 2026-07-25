@@ -2051,11 +2051,10 @@ export default function Home() {
             </button>
           </div>
         </fieldset>
-        <div className="toggle-row"><div><strong>Make me the lead</strong><small>Use your own name as the main character</small></div><button aria-pressed={settings.useMe} className={`toggle ${settings.useMe ? "on" : ""}`} onClick={() => update("useMe", !settings.useMe)}><span /></button></div>
+        <div className="toggle-row"><div><strong>Make me the lead</strong><small>Turn this on to use the name entered below as the main character</small></div><button aria-pressed={settings.useMe} className={`toggle ${settings.useMe ? "on" : ""}`} onClick={() => update("useMe", !settings.useMe)}><span /></button></div>
         <div className="field-grid">
-          {settings.useMe ? (
-            <label>Your name<input value={settings.yourName} onChange={(event) => update("yourName", event.target.value)} placeholder="Type your name" autoComplete="name" /></label>
-          ) : (
+          <label>Your name<input value={settings.yourName} onChange={(event) => update("yourName", event.target.value)} placeholder="Type your name, then turn on Make me the lead" autoComplete="name" /></label>
+          {!settings.useMe && (
             <label>Main lead<input value={settings.lead} onChange={(event) => update("lead", event.target.value)} /></label>
           )}
           <label>Second character<input value={settings.rival} onChange={(event) => update("rival", event.target.value)} /></label>
