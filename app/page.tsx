@@ -22,7 +22,7 @@ const reaperActions: ReaperAction[] = [
   {
     id: "story-importer",
     label: "Import Story",
-    description: "Open Podcast Storyboard Importer and choose the downloaded TXT file.",
+    description: "Copy this generated script and import it directly into REAPER.",
     command: "_RS99a1bb9381b40ba9ade9d82fa74add533356b26c",
     tone: "lime",
   },
@@ -122,8 +122,21 @@ export default function Home() {
   async function copy() { await navigator.clipboard.writeText(output); setCopied(true); setTimeout(() => setCopied(false), 1600); }
   function download() { const blob = new Blob([output], { type: "text/plain" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `${clean(settings.title, "story").replace(/[^a-z0-9]+/gi, "-")}-cue-script.txt`; link.click(); URL.revokeObjectURL(link.href); }
   async function sendReaperCommand(action: ReaperAction) {
+    if (action.id === "story-importer") {
+      if (!output.trim()) {
+        setReaperStatus("Generate a cue script before importing it.");
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(output);
+      } catch {
+        setReaperStatus("Clipboard access was blocked. Use Copy, allow clipboard access, then try Import Story again.");
+        return;
+      }
+    }
+
     setRunningReaperAction(action.id);
-    setReaperStatus(`Sending “${action.label}” to REAPER…`);
+    setReaperStatus(action.id === "story-importer" ? "Script copied. Sending Import Story to REAPER…" : `Sending “${action.label}” to REAPER…`);
 
     let sent = false;
     for (const baseUrl of reaperBaseUrls) {
@@ -151,7 +164,9 @@ export default function Home() {
     setRunningReaperAction(null);
     setReaperStatus(
       sent
-        ? `“${action.label}” was sent to REAPER.`
+        ? action.id === "story-importer"
+          ? "Script copied and Import Story was sent to REAPER."
+          : `“${action.label}” was sent to REAPER.`
         : "REAPER could not be reached. Open REAPER and enable Web Control on port 8080 or 8089."
     );
   }
@@ -195,7 +210,7 @@ export default function Home() {
           <div>
             <p className="reaper-kicker">LOCAL REAPER CONTROL</p>
             <h2 id="reaper-heading">4. Send the next step to REAPER</h2>
-            <p>Download your TXT first, keep REAPER open, then run each stage in order.</p>
+            <p>Keep REAPER open. Import Story copies this output and sends it straight to the importer—no file picker.</p>
           </div>
           <span className="local-badge">127.0.0.1</span>
         </div>
