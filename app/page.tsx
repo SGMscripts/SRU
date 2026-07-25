@@ -10,6 +10,43 @@ type Settings = {
   useMe: boolean;
 };
 
+type ReaperAction = {
+  id: string;
+  label: string;
+  description: string;
+  command: string;
+  tone: "lime" | "orange" | "blue";
+};
+
+const reaperActions: ReaperAction[] = [
+  {
+    id: "story-importer",
+    label: "Import Story",
+    description: "Open Podcast Storyboard Importer and choose the downloaded TXT file.",
+    command: "_RS99a1bb9381b40ba9ade9d82fa74add533356b26c",
+    tone: "lime",
+  },
+  {
+    id: "cue-recall",
+    label: "Recall Cues",
+    description: "Open Cue Recall for the imported SFX, ambience, and music cue items.",
+    command: "_RSb33e9ff14b29c13afa557ac9abaae96dd2fb3f79",
+    tone: "orange",
+  },
+  {
+    id: "elevenlabs",
+    label: "Generate Voices",
+    description: "Open the ElevenLabs voice generator for the imported character tracks.",
+    command: "_RS3f041675526b507bc147e0a1002e05e5b868215a",
+    tone: "blue",
+  },
+];
+
+const reaperBaseUrls = [
+  "http://127.0.0.1:8080",
+  "http://127.0.0.1:8089",
+];
+
 const sample = `Maya heard the phone ring in the abandoned station. Rain hammered the glass roof while she searched for the source. A familiar voice came through the receiver and warned her not to open the locked platform door. She opened it anyway. Beyond the door, Elias waited in the dark, holding her missing brother's jacket.`;
 
 function clean(value: string, fallback: string) {
@@ -63,6 +100,8 @@ export default function Home() {
   const [output, setOutput] = useState("");
   const [status, setStatus] = useState("Ready to shape your story.");
   const [copied, setCopied] = useState(false);
+  const [runningReaperAction, setRunningReaperAction] = useState<string | null>(null);
+  const [reaperStatus, setReaperStatus] = useState("Open REAPER before using these buttons.");
   const characters = useMemo(() => [clean(settings.lead, settings.useMe ? "You" : "Lead"), clean(settings.rival, "Rival")], [settings]);
 
   function update<K extends keyof Settings>(key: K, value: Settings[K]) { setSettings((previous) => ({ ...previous, [key]: value })); }
@@ -82,6 +121,40 @@ export default function Home() {
   }
   async function copy() { await navigator.clipboard.writeText(output); setCopied(true); setTimeout(() => setCopied(false), 1600); }
   function download() { const blob = new Blob([output], { type: "text/plain" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `${clean(settings.title, "story").replace(/[^a-z0-9]+/gi, "-")}-cue-script.txt`; link.click(); URL.revokeObjectURL(link.href); }
+  async function sendReaperCommand(action: ReaperAction) {
+    setRunningReaperAction(action.id);
+    setReaperStatus(`Sending “${action.label}” to REAPER…`);
+
+    let sent = false;
+    for (const baseUrl of reaperBaseUrls) {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 1500);
+      try {
+        await fetch(`${baseUrl}/_/${encodeURIComponent(action.command)};`, {
+          method: "GET",
+          mode: "no-cors",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        sent = true;
+        break;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          sent = true;
+          break;
+        }
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+
+    setRunningReaperAction(null);
+    setReaperStatus(
+      sent
+        ? `“${action.label}” was sent to REAPER.`
+        : "REAPER could not be reached. Open REAPER and enable Web Control on port 8080 or 8089."
+    );
+  }
 
   return <main className="shell">
     <section className="hero">
@@ -116,6 +189,36 @@ export default function Home() {
         <div className="panel-head"><div><h2>3. REAPER-ready output</h2><p>Import directly with Podcast Storyboard Importer.</p></div>{output && <div className="actions"><button onClick={copy}>{copied ? "Copied" : "Copy"}</button><button className="download" onClick={download}>Download .txt</button></div>}</div>
         {output ? <pre>{output}</pre> : <div className="empty"><div className="terminal-mark">›_</div><h3>Your production script appears here.</h3><p>It will include structured voice directions and cue tracks, ready for your REAPER pipeline.</p></div>}
       </div>
+
+      <section className="panel reaper-panel" aria-labelledby="reaper-heading">
+        <div className="reaper-heading">
+          <div>
+            <p className="reaper-kicker">LOCAL REAPER CONTROL</p>
+            <h2 id="reaper-heading">4. Send the next step to REAPER</h2>
+            <p>Download your TXT first, keep REAPER open, then run each stage in order.</p>
+          </div>
+          <span className="local-badge">127.0.0.1</span>
+        </div>
+        <div className="reaper-actions">
+          {reaperActions.map((action, index) => (
+            <button
+              key={action.id}
+              className={`reaper-action ${action.tone}`}
+              disabled={runningReaperAction !== null}
+              onClick={() => void sendReaperCommand(action)}
+              aria-busy={runningReaperAction === action.id}
+            >
+              <span className="action-number">0{index + 1}</span>
+              <span className="action-copy">
+                <strong>{runningReaperAction === action.id ? "Sending…" : action.label}</strong>
+                <small>{action.description}</small>
+              </span>
+              <span className="action-arrow" aria-hidden="true">→</span>
+            </button>
+          ))}
+        </div>
+        <p className="reaper-status" role="status">{reaperStatus}</p>
+      </section>
     </section>
   </main>;
 }
