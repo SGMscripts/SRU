@@ -56,6 +56,29 @@ function compileInviteParser(page) {
   return context.parseInvite;
 }
 
+function compileGroqRouteConfig(route) {
+  const configStart = route.indexOf("type Provider");
+  const configEnd = route.indexOf("function spokenWordCount");
+  const urlStart = route.indexOf("function safeGroqBaseUrl");
+  const urlEnd = route.indexOf("async function providerText");
+  assert.ok(configStart >= 0 && configEnd > configStart, "Groq config source must be extractable");
+  assert.ok(urlStart >= 0 && urlEnd > urlStart, "Groq URL validator source must be extractable");
+  const source = `
+    ${route.slice(configStart, configEnd)}
+    ${route.slice(urlStart, urlEnd)}
+    globalThis.groqRouteConfig = { requestedProvider, validatedApiKey, safeGroqBaseUrl };
+  `;
+  const javascript = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.None,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const context = vm.createContext({ URL });
+  vm.runInContext(javascript, context);
+  return context.groqRouteConfig;
+}
+
 function inviteFragment(payload) {
   return `#reaper-invite=${Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")}`;
 }
@@ -97,8 +120,20 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(page, /runtimeMinutes:\s*3/);
   assert.match(page, /runtimeMinutes:\s*settings\.runtimeMinutes/);
   assert.match(page, /chooseRuntime\(7\)/);
-  assert.match(page, /enforceTrainingCueBank\(optimized\)/);
+  assert.match(page, /enforceTrainingCueBank\(locallyOptimized\)/);
   assert.match(page, /enforceTrainingCueBank\(locallyRanged\)/);
+  assert.match(page, /function prepareGeneratedCueScript\(script: string, settings: Settings\)/);
+  assert.match(page, /if \(settings\.optimizeCues\) prepared = optimizeCueScriptLocally\(prepared\)/);
+  assert.match(page, /if \(settings\.ambientRanges\) \{\s*prepared = applyAmbientRangesLocally\(prepared\);\s*\} else \{[\s\S]*?stripAmbientRangeMarkers\(prepared\)/);
+  assert.match(page, /settings\.trainingCueBank\s*\?\s*enforceTrainingCueBank\(prepared\)/);
+  assert.match(page, /const fallback = prepareGeneratedCueScript\(localStoryboard\(story, settings\), settings\)/);
+  assert.match(page, /const prepared = prepareGeneratedCueScript\(data\.script, settings\)/);
+  assert.match(page, /Cue prep:/);
+  assert.match(page, /type AIProvider = "openai" \| "gemini" \| "groq" \| "compatible"/);
+  assert.match(page, /groq:\s*\{ apiKey: "", model: "openai\/gpt-oss-20b"/);
+  assert.match(page, /Groq Fast · GPT-OSS 20B/);
+  assert.match(page, /Groq Studio · GPT-OSS 120B/);
+  assert.match(page, /Groq API key \(gsk_/);
   assert.match(page, /Training Cue Bank · Demo Lock/);
   assert.match(page, /REMOTE_REAPER_STORAGE_KEY/);
   assert.match(page, /Internet relay URLs must begin with wss:\/\//);
@@ -165,9 +200,39 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(route, /enforceTrainingCueBank\(script\)/);
   assert.match(route, /cueBank/);
   assert.match(route, /settings\.yourName/);
+  assert.match(route, /type Provider = "openai" \| "gemini" \| "groq" \| "compatible"/);
+  assert.match(route, /GROQ_DEFAULT_BASE_URL\s*=\s*"https:\/\/api\.groq\.com\/openai\/v1"/);
+  assert.match(route, /safeGroqBaseUrl/);
+  assert.match(route, /provider === "groq"/);
+  assert.match(route, /openai\/gpt-oss-20b/);
+  assert.match(route, /reasoning_effort:\s*"low"/);
+  assert.match(route, /reasoning_effort:\s*"medium"/);
+  assert.match(route, /gsk_\[A-Za-z0-9_-\]/);
 
   assert.match(layout, /(?:title:\s*|const title\s*=\s*)"Story Cue Studio"/);
   assert.match(layout, /REAPER-ready (?:immersive )?audio drama/);
+});
+
+test("strictly limits Groq to a browser-supplied gsk key and its official OpenAI-compatible endpoint", async () => {
+  const route = await readFile(new URL("../app/api/generate/route.ts", import.meta.url), "utf8");
+  const { requestedProvider, validatedApiKey, safeGroqBaseUrl } = compileGroqRouteConfig(route);
+  const validGroqKey = `gsk_${"a".repeat(32)}`;
+
+  assert.equal(requestedProvider("groq"), "groq");
+  assert.equal(requestedProvider("unsupported"), null);
+  assert.equal(
+    validatedApiKey("groq", validGroqKey),
+    validGroqKey,
+  );
+  assert.throws(() => validatedApiKey("groq", "sk-not-groq"), /valid Groq API key/i);
+  assert.equal(
+    safeGroqBaseUrl("https://api.groq.com/openai/v1/"),
+    "https://api.groq.com/openai/v1",
+  );
+  assert.throws(
+    () => safeGroqBaseUrl("https://example.test/openai/v1"),
+    /Groq API URL/i,
+  );
 });
 
 test("strictly validates ephemeral private REAPER invite fragments", async () => {

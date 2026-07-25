@@ -31,7 +31,7 @@ type Settings = {
   rivalVoiceId: string;
 };
 
-type AIProvider = "openai" | "gemini" | "compatible";
+type AIProvider = "openai" | "gemini" | "groq" | "compatible";
 
 type ProviderConfig = {
   apiKey: string;
@@ -54,6 +54,7 @@ type AISettings = {
   provider: AIProvider;
   openai: ProviderConfig;
   gemini: ProviderConfig;
+  groq: ProviderConfig;
   compatible: ProviderConfig;
 };
 
@@ -160,16 +161,31 @@ const performanceTastes = [
   { id: "documentary", label: "Documentary · clear, restrained and factual" },
 ];
 
+const groqModels = [
+  {
+    id: "openai/gpt-oss-20b",
+    label: "Groq Fast · GPT-OSS 20B",
+    description: "Best speed for a complete REAPER-ready draft",
+  },
+  {
+    id: "openai/gpt-oss-120b",
+    label: "Groq Studio · GPT-OSS 120B",
+    description: "More story detail while remaining very fast",
+  },
+] as const;
+
 const defaultAISettings: AISettings = {
   provider: "openai",
   openai: { apiKey: "", model: "gpt-5.6-terra", baseUrl: "" },
   gemini: { apiKey: "", model: "gemini-3.6-flash", baseUrl: "" },
+  groq: { apiKey: "", model: "openai/gpt-oss-20b", baseUrl: "https://api.groq.com/openai/v1" },
   compatible: { apiKey: "", model: "openai/gpt-5.6-terra", baseUrl: "https://openrouter.ai/api/v1" },
 };
 
 const providerLabels: Record<AIProvider, string> = {
   openai: "OpenAI",
   gemini: "Gemini",
+  groq: "Groq Fast",
   compatible: "Other model",
 };
 
@@ -451,6 +467,48 @@ function applyAmbientRangesLocally(script: string) {
   return lines.join("\n");
 }
 
+type GeneratedCuePreparation = {
+  script: string;
+  cueBank?: TrainingCueBankReport;
+  optimized: boolean;
+  ranged: boolean;
+};
+
+/**
+ * Keep the final hand-off deterministic. AI providers are asked to produce
+ * search-ready cues and semantic ambient ranges, but this browser-side pass
+ * makes the Generate button apply exactly the same policy to local and AI
+ * scripts before either one reaches REAPER.
+ */
+function prepareGeneratedCueScript(script: string, settings: Settings): GeneratedCuePreparation {
+  let prepared = script;
+  if (settings.optimizeCues) prepared = optimizeCueScriptLocally(prepared);
+  if (settings.ambientRanges) {
+    prepared = applyAmbientRangesLocally(prepared);
+  } else {
+    // A provider can still return range markers despite the prompt. Keep the
+    // disabled setting authoritative for both local and AI-generated scripts.
+    prepared = stripAmbientRangeMarkers(prepared);
+  }
+  const constrained = settings.trainingCueBank
+    ? enforceTrainingCueBank(prepared)
+    : undefined;
+  return {
+    script: constrained?.script || prepared,
+    cueBank: constrained?.report,
+    optimized: settings.optimizeCues,
+    ranged: settings.ambientRanges,
+  };
+}
+
+function cuePreparationStatus(preparation: GeneratedCuePreparation) {
+  const stages = [
+    preparation.optimized ? "search-ready SFX, Ambient, and Music cues" : "",
+    preparation.ranged ? "Ambient START/END ranges" : "",
+  ].filter(Boolean);
+  return stages.length ? ` Cue prep: ${stages.join(" + ")}.` : "";
+}
+
 function inferAmbientLocation(story: string, fallback: string) {
   const lower = story.toLowerCase();
   const locations = [
@@ -526,7 +584,7 @@ function localStoryboard(story: string, settings: Settings) {
   const lines = [
     `EPISODE — ${clean(settings.title, "UNTITLED STORY").toUpperCase()}`,
     "",
-    `[AMBIENT: ${placeOne}${settings.ambientRanges ? " | START" : ""}]`,
+    `[AMBIENT: ${placeOne}]`,
     musicCue(musicIndex++),
     "",
   ];
@@ -538,9 +596,8 @@ function localStoryboard(story: string, settings: Settings) {
     const isLead = lower.includes(lead.toLowerCase());
     const isRival = lower.includes(rival.toLowerCase());
     if (index > 0 && settings.places === 2 && index === Math.floor(sentences.length / 2)) {
-      if (settings.ambientRanges) lines.push(`[AMBIENT: ${activeAmbient} | END]`);
       activeAmbient = placeTwo;
-      lines.push("[SFX: transition whoosh]", `[AMBIENT: ${placeTwo}${settings.ambientRanges ? " | START" : ""}]`, "");
+      lines.push("[SFX: transition whoosh]", `[AMBIENT: ${placeTwo}]`, "");
     }
     if (/(door|gun|phone|step|footstep|rain|hit|crash|knock|ring)/.test(lower)) {
       const cue = lower.includes("phone") || lower.includes("ring")
@@ -570,9 +627,8 @@ function localStoryboard(story: string, settings: Settings) {
     const moment = safeMoments[beatIndex % safeMoments.length] || "The situation changed before either person was ready.";
     if (musicIndex < musicCueCount - 1) lines.push(musicCue(musicIndex++));
     if (settings.places === 2 && beatIndex === 3 && activeAmbient !== placeTwo) {
-      if (settings.ambientRanges) lines.push(`[AMBIENT: ${activeAmbient} | END]`);
       activeAmbient = placeTwo;
-      lines.push("[SFX: transition whoosh]", `[AMBIENT: ${placeTwo}${settings.ambientRanges ? " | START" : ""}]`);
+      lines.push("[SFX: transition whoosh]", `[AMBIENT: ${placeTwo}]`);
     }
     lines.push(`[SFX: ${beat.sfx}]`);
     voiceLine(lines, settings, "Narrator", "narration", beat.narratorA(moment, lead, rival));
@@ -583,12 +639,8 @@ function localStoryboard(story: string, settings: Settings) {
     beatIndex += 1;
   }
 
-  if (settings.ambientRanges) lines.push(`[AMBIENT: ${activeAmbient} | END]`);
   if (musicIndex < musicCueCount) lines.push(musicCue(musicIndex));
-  const script = lines.join("\n");
-  const optimized = settings.optimizeCues ? optimizeCueScriptLocally(script) : script;
-  const constrained = settings.trainingCueBank ? enforceTrainingCueBank(optimized).script : optimized;
-  return fitLocalScriptToRuntime(constrained, settings);
+  return fitLocalScriptToRuntime(lines.join("\n"), settings);
 }
 
 function cueBankStatus(report?: TrainingCueBankReport) {
@@ -602,6 +654,7 @@ function cloneAISettings(settings: AISettings): AISettings {
     provider: settings.provider,
     openai: { ...settings.openai },
     gemini: { ...settings.gemini },
+    groq: { ...settings.groq },
     compatible: { ...settings.compatible },
   };
 }
@@ -924,9 +977,10 @@ export default function Home() {
         if (!saved) return;
         const parsed = JSON.parse(saved) as Partial<AISettings>;
         const restored: AISettings = {
-          provider: parsed.provider === "gemini" || parsed.provider === "compatible" ? parsed.provider : "openai",
+          provider: parsed.provider === "gemini" || parsed.provider === "groq" || parsed.provider === "compatible" ? parsed.provider : "openai",
           openai: { ...defaultAISettings.openai, ...(parsed.openai || {}) },
           gemini: { ...defaultAISettings.gemini, ...(parsed.gemini || {}) },
+          groq: { ...defaultAISettings.groq, ...(parsed.groq || {}) },
           compatible: { ...defaultAISettings.compatible, ...(parsed.compatible || {}) },
         };
         setAISettings(restored);
@@ -1706,12 +1760,11 @@ export default function Home() {
     }
     setGenerating(true);
     setStatus(`Building a ${selectedRuntime.label} with ${activeProviderConfig.apiKey ? providerLabels[aiSettings.provider] : "the local generator"}…`);
-    const fallback = localStoryboard(story, settings);
+    const fallback = prepareGeneratedCueScript(localStoryboard(story, settings), settings);
     if (!activeProviderConfig.apiKey.trim()) {
-      setOutput(fallback);
-      const words = spokenWordCount(fallback);
-      const bank = settings.trainingCueBank ? enforceTrainingCueBank(fallback).report : undefined;
-      setStatus(`Local ${selectedRuntime.label} created: ${words.toLocaleString()} spoken words, about ${(words / WORDS_PER_MINUTE).toFixed(1)} minutes.${cueBankStatus(bank)} Add an AI key for a richer adaptation.`);
+      setOutput(fallback.script);
+      const words = spokenWordCount(fallback.script);
+      setStatus(`Local ${selectedRuntime.label} created: ${words.toLocaleString()} spoken words, about ${(words / WORDS_PER_MINUTE).toFixed(1)} minutes.${cuePreparationStatus(fallback)}${cueBankStatus(fallback.cueBank)} Add an AI key for a richer adaptation.`);
       setGenerating(false);
       return;
     }
@@ -1739,12 +1792,14 @@ export default function Home() {
         cueBank?: TrainingCueBankReport;
       };
       if (!response.ok || !data.script) throw new Error(data.error || "The model did not return a cue script.");
-      setOutput(data.script);
-      setStatus(`${providerLabels[aiSettings.provider]} created ${Number(data.spokenWords || spokenWordCount(data.script)).toLocaleString()} spoken words, about ${data.estimatedMinutes || (spokenWordCount(data.script) / WORDS_PER_MINUTE).toFixed(1)} minutes.${cueBankStatus(data.cueBank)}`);
+      const prepared = prepareGeneratedCueScript(data.script, settings);
+      const words = spokenWordCount(prepared.script);
+      setOutput(prepared.script);
+      setStatus(`${providerLabels[aiSettings.provider]} created ${words.toLocaleString()} spoken words, about ${(words / WORDS_PER_MINUTE).toFixed(1)} minutes.${cuePreparationStatus(prepared)}${cueBankStatus(prepared.cueBank || data.cueBank)}`);
     } catch (error) {
-      setOutput(fallback);
+      setOutput(fallback.script);
       const message = error instanceof Error ? error.message : "AI generation failed.";
-      setStatus(`${message} A local ${selectedRuntime.label} was created instead.`);
+      setStatus(`${message} A local ${selectedRuntime.label} was created instead.${cuePreparationStatus(fallback)}${cueBankStatus(fallback.cueBank)}`);
     } finally {
       setGenerating(false);
     }
@@ -2072,11 +2127,11 @@ export default function Home() {
             />
           </label>
           <div className="toggle-row compact">
-            <div><strong>Optimize cue data</strong><small>Search-ready SFX, Ambient and Music cues</small></div>
+            <div><strong>Optimize cue data</strong><small>Automatically make SFX, Ambient and Music cues search-ready when you Generate</small></div>
             <button aria-pressed={settings.optimizeCues} className={`toggle ${settings.optimizeCues ? "on" : ""}`} onClick={() => update("optimizeCues", !settings.optimizeCues)}><span /></button>
           </div>
           <div className="toggle-row compact ambient-range-option">
-            <div><strong>Ambient cue ranges</strong><small>Add semantic START/END cues where each place begins and stops—no timecodes and no SFX ranges</small></div>
+            <div><strong>Ambient cue ranges</strong><small>Automatically add semantic START/END cues when you Generate—no timecodes and no SFX ranges</small></div>
             <button aria-pressed={settings.ambientRanges} className={`toggle ${settings.ambientRanges ? "on" : ""}`} onClick={() => update("ambientRanges", !settings.ambientRanges)}><span /></button>
           </div>
           <div className="toggle-row compact cue-bank-option">
@@ -2458,7 +2513,7 @@ export default function Home() {
         </div>
 
         <div className="provider-tabs" role="tablist" aria-label="AI provider">
-          {(["openai", "gemini", "compatible"] as AIProvider[]).map((provider) => (
+          {(["openai", "gemini", "groq", "compatible"] as AIProvider[]).map((provider) => (
             <button
               key={provider}
               role="tab"
@@ -2480,7 +2535,7 @@ export default function Home() {
                 autoComplete="off"
                 value={draftProviderConfig.apiKey}
                 onChange={(event) => updateDraftProvider("apiKey", event.target.value)}
-                placeholder={draftAISettings.provider === "gemini" ? "Gemini API key" : "API key"}
+                placeholder={draftAISettings.provider === "gemini" ? "Gemini API key" : draftAISettings.provider === "groq" ? "Groq API key (gsk_…)" : "API key"}
               />
               <button type="button" onClick={() => setShowAPIKey((visible) => !visible)}>{showAPIKey ? "Hide" : "Show"}</button>
             </div>
@@ -2490,9 +2545,24 @@ export default function Home() {
             <input
               value={draftProviderConfig.model}
               onChange={(event) => updateDraftProvider("model", event.target.value)}
-              placeholder={draftAISettings.provider === "openai" ? "gpt-5.6-terra" : draftAISettings.provider === "gemini" ? "gemini-3.6-flash" : "Provider model ID"}
+              placeholder={draftAISettings.provider === "openai" ? "gpt-5.6-terra" : draftAISettings.provider === "gemini" ? "gemini-3.6-flash" : draftAISettings.provider === "groq" ? "openai/gpt-oss-20b" : "Provider model ID"}
             />
           </label>
+          {draftAISettings.provider === "groq" && <div className="groq-models" role="group" aria-label="Groq story model">
+            <strong>Fast REAPER-ready models</strong>
+            <div>
+              {groqModels.map((model) => <button
+                key={model.id}
+                type="button"
+                className={draftProviderConfig.model === model.id ? "active" : ""}
+                onClick={() => updateDraftProvider("model", model.id)}
+              >
+                <span>{model.label}</span>
+                <small>{model.description}</small>
+              </button>)}
+            </div>
+            <p>Groq uses its fixed official API endpoint. Choose Fast for the quickest story, SFX optimization, and Ambient range hand-off.</p>
+          </div>}
           {draftAISettings.provider === "compatible" && <label>
             OpenAI-compatible base URL
             <input
@@ -2505,7 +2575,7 @@ export default function Home() {
             <strong>Stored only on this browser</strong>
             <span>Your key is sent only when you generate or optimize cues. The site does not save it on the server.</span>
           </div>
-          {draftAISettings.provider === "compatible" && <p className="compatible-note">Supported: OpenRouter, Groq, Together, Mistral, DeepSeek, Cerebras, and Fireworks.</p>}
+          {draftAISettings.provider === "compatible" && <p className="compatible-note">Supported: OpenRouter, Together, Mistral, DeepSeek, Cerebras, and Fireworks. Use the dedicated Groq Fast tab for Groq.</p>}
         </div>
 
         <p className="ai-settings-status" role="status">{aiSettingsStatus}</p>

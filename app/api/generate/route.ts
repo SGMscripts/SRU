@@ -8,7 +8,7 @@ import {
   runtimeWordIssue,
 } from "../../story-runtime";
 
-type Provider = "openai" | "gemini" | "compatible";
+type Provider = "openai" | "gemini" | "groq" | "compatible";
 
 type AIRequest = {
   provider?: Provider;
@@ -37,6 +37,26 @@ const TRUSTED_COMPATIBLE_HOSTS = new Set([
   "api.cerebras.ai",
   "api.fireworks.ai",
 ]);
+
+const GROQ_DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
+
+function requestedProvider(value: unknown): Provider | null {
+  if (value === undefined || value === null || value === "" || value === "openai") return "openai";
+  if (value === "gemini" || value === "groq" || value === "compatible") return value;
+  return null;
+}
+
+function validatedApiKey(provider: Provider, value: unknown) {
+  if (value === undefined || value === null || value === "") return "";
+  if (typeof value !== "string") throw new Error("The API key must be text.");
+  const key = value.trim();
+  if (!key) return "";
+  if (/[\u0000-\u001F\u007F]/.test(key)) throw new Error("The API key contains invalid characters.");
+  if (provider === "groq" && !/^gsk_[A-Za-z0-9_-]{16,}$/.test(key)) {
+    throw new Error("Enter a valid Groq API key (it begins with gsk_).");
+  }
+  return key;
+}
 
 function spokenWordCount(script: string) {
   return script
@@ -255,6 +275,29 @@ function safeCompatibleBaseUrl(value: string) {
   return parsed.toString().replace(/\/+$/, "");
 }
 
+function safeGroqBaseUrl(value: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("The Groq API URL must be https://api.groq.com/openai/v1.");
+  }
+  const path = parsed.pathname.replace(/\/+$/, "");
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.port ||
+    parsed.hostname.toLowerCase() !== "api.groq.com" ||
+    path !== "/openai/v1" ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error("The Groq API URL must be https://api.groq.com/openai/v1.");
+  }
+  return parsed.toString().replace(/\/+$/, "");
+}
+
 async function providerText(ai: Required<AIRequest>, instructions: string, input: string) {
   if (ai.provider === "openai") {
     const response = await fetch("https://api.openai.com/v1/responses", {
@@ -301,7 +344,8 @@ async function providerText(ai: Required<AIRequest>, instructions: string, input
     return data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("\n") || "";
   }
 
-  const baseUrl = safeCompatibleBaseUrl(ai.baseUrl);
+  const isGroq = ai.provider === "groq";
+  const baseUrl = isGroq ? safeGroqBaseUrl(ai.baseUrl) : safeCompatibleBaseUrl(ai.baseUrl);
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -315,11 +359,17 @@ async function providerText(ai: Required<AIRequest>, instructions: string, input
         { role: "user", content: input },
       ],
       max_tokens: 12000,
+      ...(isGroq && ai.model === "openai/gpt-oss-20b"
+        ? { reasoning_effort: "low" }
+        : isGroq && ai.model === "openai/gpt-oss-120b"
+          ? { reasoning_effort: "medium" }
+          : {}),
     }),
   });
   if (!response.ok) {
     const details = await response.text();
-    throw new Error(`Compatible API request failed (${response.status}): ${details.slice(0, 240)}`);
+    const name = isGroq ? "Groq" : "Compatible API";
+    throw new Error(`${name} request failed (${response.status}): ${details.slice(0, 240)}`);
   }
   const data = await response.json() as {
     choices?: Array<{ message?: { content?: string } }>;
@@ -401,17 +451,49 @@ export async function POST(request: Request) {
       ai?: AIRequest;
     };
     const requested = body.ai || {};
-    const provider: Provider = requested.provider === "gemini" || requested.provider === "compatible" ? requested.provider : "openai";
+    const provider = requestedProvider(requested.provider);
+    if (!provider) {
+      return NextResponse.json({
+        mode: "error",
+        error: "Choose OpenAI, Gemini, Groq, or an OpenAI-compatible provider.",
+      }, { status: 400 });
+    }
     const defaults = {
       openai: "gpt-5.6-terra",
       gemini: "gemini-3.6-flash",
+      groq: "openai/gpt-oss-20b",
       compatible: "",
     };
+    const configuredKey = requested.apiKey || (
+      provider === "openai"
+        ? process.env.OPENAI_API_KEY || ""
+        : ""
+    );
+    let apiKey: string;
+    try {
+      apiKey = validatedApiKey(provider, configuredKey);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Enter a valid API key.";
+      return NextResponse.json({ mode: "error", error: message }, { status: 400 });
+    }
+    const defaultBaseUrl = provider === "groq" ? GROQ_DEFAULT_BASE_URL : "https://openrouter.ai/api/v1";
+    if (provider === "groq" && requested.baseUrl !== undefined && requested.baseUrl !== null && typeof requested.baseUrl !== "string") {
+      return NextResponse.json({ mode: "error", error: "The API URL must be text." }, { status: 400 });
+    }
+    let baseUrl = String(requested.baseUrl || defaultBaseUrl).trim();
+    if (provider === "groq" && apiKey) {
+      try {
+        baseUrl = safeGroqBaseUrl(baseUrl);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Enter a valid Groq API URL.";
+        return NextResponse.json({ mode: "error", error: message }, { status: 400 });
+      }
+    }
     const ai: Required<AIRequest> = {
       provider,
-      apiKey: String(requested.apiKey || (provider === "openai" ? process.env.OPENAI_API_KEY || "" : "")).trim(),
+      apiKey,
       model: String(requested.model || defaults[provider]).trim(),
-      baseUrl: String(requested.baseUrl || "https://openrouter.ai/api/v1").trim(),
+      baseUrl,
     };
     if (!ai.apiKey) return NextResponse.json({ mode: "local", reason: "missing_api_key" });
     if (!ai.model) return NextResponse.json({ mode: "error", error: "Enter a model name in AI Settings." }, { status: 400 });
