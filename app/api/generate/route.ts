@@ -108,6 +108,7 @@ Rules:
 - Never rewrite dialogue, narration, titles, or VOICE directives.
 - SFX: use one to three comma-separated chunks. Each chunk must contain one or two practical library-search words in lowercase and base form. Use "door slam", not a sentence. Remove names and words such as sound, noise, effect, suddenly, loudly, or slowly.
 - AMBIENT: use only a concrete searchable location/environment of one to four words, such as "hospital room", "city street", or "abandoned station interior". Do not use ambience, atmosphere, background, fade, or voice.
+- If an AMBIENT cue ends with | START or | END, preserve that exact range state. Never add range states to SFX.
 - MUSIC: write one compact scene brief inside the tag using exactly: Scene: ... | Summary: ... | Mood: ... | Search: ...
 - MUSIC Scene is 2–6 words; Summary is no more than 12 words; Mood has 2–4 comma-separated emotions; Search is a vivid phrase containing instrument, mood, and emotional arc.
 - Use nearby story text to disambiguate abstract cues.
@@ -127,11 +128,93 @@ Rules:
     if (!source) continue;
     const match = tag.match(/^\[(SFX|AMBIENT|MUSIC):\s*(.*?)\]$/i);
     if (!match || match[1].toUpperCase() !== source.type || !match[2].trim()) continue;
+    if (source.type === "AMBIENT") {
+      const sourceState = source.original.match(/\|\s*(START|END)\s*\]$/i)?.[1]?.toUpperCase() || "";
+      const resultState = match[2].match(/\|\s*(START|END)\s*$/i)?.[1]?.toUpperCase() || "";
+      if (sourceState !== resultState) continue;
+    }
     lines[index] = `[${source.type}: ${match[2].trim()}]`;
     optimizedCount += 1;
   }
   if (!optimizedCount) throw new Error("The model did not return usable optimized cues.");
   return { script: lines.join("\n"), optimizedCount };
+}
+
+function stripAmbientRanges(script: string) {
+  return script.split(/\r?\n/).flatMap((line) => {
+    const match = line.match(/^\s*\[AMBIENT:\s*(.*?)\]\s*$/i);
+    if (!match) return [line];
+    const state = match[1].match(/\|\s*(START|END)\s*$/i)?.[1]?.toUpperCase();
+    if (state === "END") return [];
+    return [`[AMBIENT: ${match[1].replace(/\|\s*START\s*$/i, "").trim()}]`];
+  }).join("\n");
+}
+
+async function applyAmbientCueRanges(ai: Required<AIRequest>, script: string) {
+  const cleanScript = stripAmbientRanges(script);
+  const lines = cleanScript.split(/\r?\n/);
+  const ambientStarts = lines.flatMap((line, startLine) => {
+    const match = line.match(/^\s*\[AMBIENT:\s*(.*?)\]\s*$/i);
+    return match ? [{ cueId: `ambient-${startLine}`, startLine, location: match[1].trim() }] : [];
+  });
+  if (!ambientStarts.length) throw new Error("No Ambient cues were found.");
+
+  const requests = ambientStarts.map((cue, index) => ({
+    cue_id: cue.cueId,
+    start_line: cue.startLine,
+    location: cue.location,
+    hard_max_line: (ambientStarts[index + 1]?.startLine ?? lines.length) - 1,
+  }));
+  const numberedScript = lines.map((line, index) => `${index}: ${line}`).join("\n");
+  const instructions = `You are a senior audio-drama ambience editor.
+
+Decide where every AMBIENT location bed stops in the numbered script. This is semantic cue ranging, not timing.
+
+Rules:
+- Analyze AMBIENT cues only. Never create ranges for SFX or MUSIC.
+- An Ambient bed continues underneath dialogue, narration, Music cues, and short SFX that occur inside the same place.
+- End it on the last story line where that environment is still present.
+- End it when the story changes place, the environment explicitly stops or fades away, or another Ambient bed replaces it.
+- Do not end Ambient merely because a Music or SFX cue appears.
+- end_line must be at or after start_line and no later than hard_max_line.
+- Use exact line numbers from the numbered script.
+- Return every cue_id exactly once.
+- Return only strict JSON in this shape:
+{"ranges":[{"cue_id":"ambient-2","end_line":18,"confidence":"high","reason":"the characters leave the station"}]}`;
+
+  const raw = await providerText(ai, instructions, JSON.stringify({ ambient_cues: requests, numbered_script: numberedScript }));
+  const parsed = parseJsonObject(raw);
+  const ranges = Array.isArray(parsed.ranges) ? parsed.ranges : [];
+  const byId = new Map<string, { endLine: number }>();
+  for (const value of ranges) {
+    if (!value || typeof value !== "object") continue;
+    const item = value as { cue_id?: unknown; end_line?: unknown };
+    const cueId = String(item.cue_id || "");
+    const endLine = Math.round(Number(item.end_line));
+    if (cueId && Number.isFinite(endLine)) byId.set(cueId, { endLine });
+  }
+
+  const insertions: Array<{ endLine: number; marker: string }> = [];
+  ambientStarts.forEach((cue, index) => {
+    const hardMax = (ambientStarts[index + 1]?.startLine ?? lines.length) - 1;
+    const requestedEnd = byId.get(cue.cueId)?.endLine ?? hardMax;
+    let endLine = Math.max(cue.startLine, Math.min(hardMax, requestedEnd));
+    if (/^\s*\[VOICE:/i.test(lines[endLine] || "")) {
+      for (let candidate = endLine + 1; candidate <= hardMax; candidate += 1) {
+        const trimmed = lines[candidate]?.trim() || "";
+        if (trimmed && !trimmed.startsWith("[")) {
+          endLine = candidate;
+          break;
+        }
+      }
+    }
+    lines[cue.startLine] = `[AMBIENT: ${cue.location} | START]`;
+    insertions.push({ endLine, marker: `[AMBIENT: ${cue.location} | END]` });
+  });
+  insertions.sort((a, b) => b.endLine - a.endLine).forEach(({ endLine, marker }) => {
+    lines.splice(endLine + 1, 0, marker);
+  });
+  return { script: lines.join("\n"), rangeCount: insertions.length };
 }
 
 function extractOpenAIText(data: Record<string, unknown>) {
@@ -236,6 +319,7 @@ function generationInstructions(settings: Record<string, unknown>) {
   const rival = String(settings.rival || "Rival");
   const musicCueCount = Math.max(1, Math.min(20, Number(settings.musicCueCount) || 7));
   const optimizeCues = settings.optimizeCues !== false;
+  const ambientRanges = settings.ambientRanges !== false;
   return `Convert the supplied prose into a complete REAPER PodcastVoice audio-drama cue script.
 
 Runtime and story:
@@ -258,6 +342,14 @@ Cast and format:
 ${optimizeCues ? `- Optimize all cue data for sound-library search.
 - SFX must contain one to three comma-separated chunks of one or two lowercase search words: [SFX: door slam, lock click]. Use concrete object + action terms, base verbs, no character names, and never the words sound, noise, or effect.
 - AMBIENT must contain only a concrete one-to-four-word location/environment: [AMBIENT: abandoned station interior]. Never use placeholder labels such as PLACE 1, main story location, ambience, atmosphere, background, fade, or under voice.` : "- Keep SFX and Ambient descriptions concise, concrete, and tied to the nearby story action."}
+${ambientRanges ? `- Give every Ambient location a semantic range using paired cues:
+  [AMBIENT: abandoned station interior | START]
+  [AMBIENT: abandoned station interior | END]
+- Put START where the place first becomes audible. Put END immediately after the last spoken/action line that still occurs there.
+- Ambient continues underneath narration, dialogue, Music, and spot SFX until the place actually changes or stops.
+- Every Ambient START must have one matching END with the exact same location text.
+- These are story-position markers only: never include timecodes, seconds, or durations.
+- Never add START or END to SFX or Music cues.` : "- Do not add START or END range markers."}
 - Begin with EPISODE — followed by the title.
 - Return only the finished cue script, with no markdown fence or explanation.`;
 }
@@ -300,6 +392,12 @@ export async function POST(request: Request) {
       const optimized = await optimizeCueScript(ai, script);
       return NextResponse.json({ mode: "ai", provider, model: ai.model, ...optimized });
     }
+    if (body.action === "ambient_ranges") {
+      const script = String(body.script || "").trim();
+      if (!script) return NextResponse.json({ mode: "error", error: "Generate a cue script first." }, { status: 400 });
+      const ranged = await applyAmbientCueRanges(ai, script);
+      return NextResponse.json({ mode: "ai", provider, model: ai.model, ...ranged });
+    }
 
     const story = String(body.story || "").trim();
     if (!story) return NextResponse.json({ mode: "error", error: "Paste a story first." }, { status: 400 });
@@ -312,15 +410,23 @@ ${story}`;
     let words = spokenWordCount(script);
     const requestedMusicCues = Math.max(1, Math.min(20, Number(settings.musicCueCount) || 7));
     let musicCues = countCueType(script, "MUSIC");
+    const ambientRanges = settings.ambientRanges !== false;
+    let ambientStarts = script.split(/\r?\n/).filter((line) => /^\s*\[AMBIENT:.*\|\s*START\s*\]\s*$/i.test(line)).length;
+    let ambientEnds = script.split(/\r?\n/).filter((line) => /^\s*\[AMBIENT:.*\|\s*END\s*\]\s*$/i.test(line)).length;
 
-    if (words < MIN_SPOKEN_WORDS || musicCues !== requestedMusicCues) {
+    if (words < MIN_SPOKEN_WORDS || musicCues !== requestedMusicCues || (ambientRanges && (ambientStarts === 0 || ambientStarts !== ambientEnds))) {
       const issues = [
         words < MIN_SPOKEN_WORDS ? `only ${words} spoken words` : "",
         musicCues !== requestedMusicCues ? `${musicCues} MUSIC cues instead of exactly ${requestedMusicCues}` : "",
+        ambientRanges && (ambientStarts === 0 || ambientStarts !== ambientEnds)
+          ? `${ambientStarts} Ambient START cues and ${ambientEnds} Ambient END cues; every location needs one matching pair`
+          : "",
       ].filter(Boolean).join("; ");
       script = cleanScript(await providerText(ai, repairInstructions(settings, issues), `Draft to replace:\n\n${script}`));
       words = spokenWordCount(script);
       musicCues = countCueType(script, "MUSIC");
+      ambientStarts = script.split(/\r?\n/).filter((line) => /^\s*\[AMBIENT:.*\|\s*START\s*\]\s*$/i.test(line)).length;
+      ambientEnds = script.split(/\r?\n/).filter((line) => /^\s*\[AMBIENT:.*\|\s*END\s*\]\s*$/i.test(line)).length;
     }
     if (words < MIN_SPOKEN_WORDS) {
       return NextResponse.json({
@@ -332,6 +438,12 @@ ${story}`;
       return NextResponse.json({
         mode: "error",
         error: `The selected model returned ${musicCues} music cues after a retry; exactly ${requestedMusicCues} were requested.`,
+      }, { status: 502 });
+    }
+    if (ambientRanges && (ambientStarts === 0 || ambientStarts !== ambientEnds)) {
+      return NextResponse.json({
+        mode: "error",
+        error: `The selected model returned ${ambientStarts} Ambient START cues and ${ambientEnds} Ambient END cues after a retry.`,
       }, { status: 502 });
     }
     if (!script.includes("[VOICE:") || !/\[(?:SFX|AMBIENT|MUSIC):/i.test(script)) {

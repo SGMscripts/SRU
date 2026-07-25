@@ -10,6 +10,7 @@ type Settings = {
   useMe: boolean;
   musicCueCount: number;
   optimizeCues: boolean;
+  ambientRanges: boolean;
 };
 
 type AIProvider = "openai" | "gemini" | "compatible";
@@ -230,12 +231,14 @@ function optimizeSfxBody(body: string) {
 }
 
 function optimizeAmbientBody(body: string) {
-  const normalized = body.toLowerCase()
+  const state = body.match(/\|\s*(START|END)\s*$/i)?.[1]?.toUpperCase() || "";
+  const normalized = body.replace(/\|\s*(?:START|END)\s*$/i, "").toLowerCase()
     .replace(/\b(place|main|story|location|continuous|low|under|voice|contrasting|inner|reveal|quieter|intimate|returns?|fade|in|out|ambience|atmosphere|background)\b/g, " ")
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return normalized.split(" ").filter(Boolean).slice(0, 3).join(" ") || "quiet interior";
+  const location = normalized.split(" ").filter(Boolean).slice(0, 3).join(" ") || "quiet interior";
+  return `${location}${state ? ` | ${state}` : ""}`;
 }
 
 function optimizeMusicBody(body: string) {
@@ -258,6 +261,41 @@ function optimizeCueScriptLocally(script: string) {
     if (type === "AMBIENT") return `[AMBIENT: ${optimizeAmbientBody(body)}]`;
     return `[MUSIC: ${optimizeMusicBody(body)}]`;
   }).join("\n");
+}
+
+function stripAmbientRangeMarkers(script: string) {
+  return script.split(/\r?\n/).flatMap((line) => {
+    const match = line.match(/^\s*\[AMBIENT:\s*(.*?)\]\s*$/i);
+    if (!match) return [line];
+    const state = match[1].match(/\|\s*(START|END)\s*$/i)?.[1]?.toUpperCase();
+    if (state === "END") return [];
+    const location = match[1].replace(/\|\s*START\s*$/i, "").trim();
+    return [`[AMBIENT: ${location}]`];
+  }).join("\n");
+}
+
+function applyAmbientRangesLocally(script: string) {
+  const lines = stripAmbientRangeMarkers(script).split(/\r?\n/);
+  const starts = lines.flatMap((line, index) => /^\s*\[AMBIENT:\s*(.*?)\]\s*$/i.test(line) ? [index] : []);
+  if (!starts.length) return script;
+  const insertions = starts.map((startIndex, order) => {
+    const location = lines[startIndex].match(/^\s*\[AMBIENT:\s*(.*?)\]\s*$/i)?.[1]?.trim() || "location";
+    const hardEnd = (starts[order + 1] ?? lines.length) - 1;
+    let endIndex = hardEnd;
+    for (let index = hardEnd; index > startIndex; index -= 1) {
+      const trimmed = lines[index].trim();
+      if (trimmed && !trimmed.startsWith("[") && !/^EPISODE\b/i.test(trimmed)) {
+        endIndex = index;
+        break;
+      }
+    }
+    lines[startIndex] = `[AMBIENT: ${location} | START]`;
+    return { endIndex, marker: `[AMBIENT: ${location} | END]` };
+  });
+  insertions.sort((a, b) => b.endIndex - a.endIndex).forEach(({ endIndex, marker }) => {
+    lines.splice(endIndex + 1, 0, marker);
+  });
+  return lines.join("\n");
 }
 
 function inferAmbientLocation(story: string, fallback: string) {
@@ -313,10 +351,11 @@ function localStoryboard(story: string, settings: Settings) {
   );
   const musicCueCount = Math.max(1, Math.min(20, settings.musicCueCount || 7));
   let musicIndex = 0;
+  let activeAmbient = placeOne;
   const lines = [
     `EPISODE — ${clean(settings.title, "UNTITLED STORY").toUpperCase()}`,
     "",
-    `[AMBIENT: ${placeOne}]`,
+    `[AMBIENT: ${placeOne}${settings.ambientRanges ? " | START" : ""}]`,
     musicCue(musicIndex++),
     "",
   ];
@@ -328,7 +367,9 @@ function localStoryboard(story: string, settings: Settings) {
     const isLead = lower.includes(lead.toLowerCase());
     const isRival = lower.includes(rival.toLowerCase());
     if (index > 0 && settings.places === 2 && index === Math.floor(sentences.length / 2)) {
-      lines.push("[SFX: transition whoosh]", `[AMBIENT: ${placeTwo}]`, "");
+      if (settings.ambientRanges) lines.push(`[AMBIENT: ${activeAmbient} | END]`);
+      activeAmbient = placeTwo;
+      lines.push("[SFX: transition whoosh]", `[AMBIENT: ${placeTwo}${settings.ambientRanges ? " | START" : ""}]`, "");
     }
     if (/(door|gun|phone|step|footstep|rain|hit|crash|knock|ring)/.test(lower)) {
       const cue = lower.includes("phone") || lower.includes("ring")
@@ -357,7 +398,11 @@ function localStoryboard(story: string, settings: Settings) {
     const beat = expansionBeats[beatIndex % expansionBeats.length];
     const moment = safeMoments[beatIndex % safeMoments.length] || "The situation changed before either person was ready.";
     if (musicIndex < musicCueCount - 1) lines.push(musicCue(musicIndex++));
-    if (settings.places === 2 && beatIndex === 3) lines.push(`[AMBIENT: ${placeTwo}]`);
+    if (settings.places === 2 && beatIndex === 3 && activeAmbient !== placeTwo) {
+      if (settings.ambientRanges) lines.push(`[AMBIENT: ${activeAmbient} | END]`);
+      activeAmbient = placeTwo;
+      lines.push("[SFX: transition whoosh]", `[AMBIENT: ${placeTwo}${settings.ambientRanges ? " | START" : ""}]`);
+    }
     lines.push(`[SFX: ${beat.sfx}]`);
     voiceLine(lines, "Narrator", "narration", beat.narratorA(moment, lead, rival));
     voiceLine(lines, lead, "dialogue", beat.lead, "determination", 2);
@@ -367,7 +412,7 @@ function localStoryboard(story: string, settings: Settings) {
     beatIndex += 1;
   }
 
-  if (settings.places === 2) lines.push(`[AMBIENT: ${placeOne}]`);
+  if (settings.ambientRanges) lines.push(`[AMBIENT: ${activeAmbient} | END]`);
   if (musicIndex < musicCueCount) lines.push(musicCue(musicIndex));
   const script = lines.join("\n");
   return settings.optimizeCues ? optimizeCueScriptLocally(script) : script;
@@ -392,12 +437,14 @@ export default function Home() {
     useMe: false,
     musicCueCount: 7,
     optimizeCues: true,
+    ambientRanges: true,
   });
   const [output, setOutput] = useState("");
   const [status, setStatus] = useState("Ready to shape a seven-minute story.");
   const [copied, setCopied] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [optimizing, setOptimizing] = useState(false);
+  const [ranging, setRanging] = useState(false);
   const [runningReaperAction, setRunningReaperAction] = useState<string | null>(null);
   const [reaperStatus, setReaperStatus] = useState("Open REAPER before using these buttons.");
   const [aiSettings, setAISettings] = useState<AISettings>(cloneAISettings(defaultAISettings));
@@ -568,6 +615,48 @@ export default function Home() {
     }
   }
 
+  async function applyAmbientCueRanges() {
+    if (!output.trim()) {
+      setStatus("Generate a cue script before setting Ambient cue ranges.");
+      return;
+    }
+    setRanging(true);
+    setStatus(`Reading the story to find where each Ambient location stops with ${activeProviderConfig.apiKey ? providerLabels[aiSettings.provider] : "the local range planner"}…`);
+    const localVersion = applyAmbientRangesLocally(output);
+    if (!activeProviderConfig.apiKey.trim()) {
+      setOutput(localVersion);
+      setStatus("Ambient ranges added without timecodes. Each location now has a START and END cue; SFX cues were not changed.");
+      setRanging(false);
+      return;
+    }
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "ambient_ranges",
+          script: output,
+          ai: {
+            provider: aiSettings.provider,
+            apiKey: activeProviderConfig.apiKey,
+            model: activeProviderConfig.model,
+            baseUrl: activeProviderConfig.baseUrl,
+          },
+        }),
+      });
+      const data = await response.json() as { script?: string; error?: string; rangeCount?: number };
+      if (!response.ok || !data.script) throw new Error(data.error || "Ambient cue range analysis failed.");
+      setOutput(data.script);
+      setStatus(`${providerLabels[aiSettings.provider]} added ${Number(data.rangeCount || 0)} Ambient START/END range pairs without changing SFX or story text.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Ambient cue range analysis failed.";
+      setOutput(localVersion);
+      setStatus(`${message} The local Ambient range planner was used instead.`);
+    } finally {
+      setRanging(false);
+    }
+  }
+
   async function copy() {
     await navigator.clipboard.writeText(output);
     setCopied(true);
@@ -677,6 +766,10 @@ export default function Home() {
             <div><strong>Optimize cue data</strong><small>Search-ready SFX, Ambient and Music cues</small></div>
             <button aria-pressed={settings.optimizeCues} className={`toggle ${settings.optimizeCues ? "on" : ""}`} onClick={() => update("optimizeCues", !settings.optimizeCues)}><span /></button>
           </div>
+          <div className="toggle-row compact ambient-range-option">
+            <div><strong>Ambient cue ranges</strong><small>Add semantic START/END cues where each place begins and stops—no timecodes and no SFX ranges</small></div>
+            <button aria-pressed={settings.ambientRanges} className={`toggle ${settings.ambientRanges ? "on" : ""}`} onClick={() => update("ambientRanges", !settings.ambientRanges)}><span /></button>
+          </div>
         </div>
         <div className="cast"><span>CAST</span>{characters.map((name) => <b key={name}>{name}</b>)}<i>Narrator</i></div>
         <button className="generate" onClick={generate} disabled={generating}>{generating ? "Generating seven-minute script…" : "Generate 7+ minute cue script"} <span>→</span></button>
@@ -690,6 +783,9 @@ export default function Home() {
             <p>{output ? `${outputWords.toLocaleString()} spoken words · about ${outputMinutes} minutes` : "Minimum target: 1,050 spoken words."}</p>
           </div>
           {output && <div className="actions">
+            <button className="range" onClick={() => void applyAmbientCueRanges()} disabled={ranging}>
+              {ranging ? "Finding ranges…" : "Ambient Cue Range"}
+            </button>
             <button className="optimize" onClick={() => void optimizeCueData()} disabled={optimizing}>
               {optimizing ? "Optimizing…" : "Optimize Cue Data"}
             </button>
