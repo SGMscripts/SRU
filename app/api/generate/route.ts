@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  enforceTrainingCueBank,
+  trainingCueBankInstructions,
+} from "../../training-cue-bank";
 
 type Provider = "openai" | "gemini" | "compatible";
 
@@ -95,7 +99,7 @@ function extractCueRequests(script: string) {
   return { lines, requests };
 }
 
-async function optimizeCueScript(ai: Required<AIRequest>, script: string) {
+async function optimizeCueScript(ai: Required<AIRequest>, script: string, trainingCueBank: boolean) {
   const { lines, requests } = extractCueRequests(script);
   if (!requests.length) throw new Error("No SFX, Ambient, or Music cues were found.");
   const instructions = `You are a professional audio-drama sound designer preparing cue text for automated sound-library search.
@@ -113,7 +117,8 @@ Rules:
 - MUSIC Scene is 2–6 words; Summary is no more than 12 words; Mood has 2–4 comma-separated emotions; Search is a vivid phrase containing instrument, mood, and emotional arc.
 - Use nearby story text to disambiguate abstract cues.
 - Keep already-specific cues, but normalize their formatting.
-- Never convert SFX, AMBIENT, and MUSIC into one another.`;
+- Never convert SFX, AMBIENT, and MUSIC into one another.
+${trainingCueBank ? `\n${trainingCueBankInstructions()}` : ""}`;
   const raw = await providerText(ai, instructions, JSON.stringify({ cues: requests }));
   const parsed = parseJsonObject(raw);
   const returned = Array.isArray(parsed.cues) ? parsed.cues : [];
@@ -137,7 +142,10 @@ Rules:
     optimizedCount += 1;
   }
   if (!optimizedCount) throw new Error("The model did not return usable optimized cues.");
-  return { script: lines.join("\n"), optimizedCount };
+  const optimizedScript = lines.join("\n");
+  if (!trainingCueBank) return { script: optimizedScript, optimizedCount };
+  const constrained = enforceTrainingCueBank(optimizedScript);
+  return { script: constrained.script, optimizedCount, cueBank: constrained.report };
 }
 
 function stripAmbientRanges(script: string) {
@@ -150,7 +158,7 @@ function stripAmbientRanges(script: string) {
   }).join("\n");
 }
 
-async function applyAmbientCueRanges(ai: Required<AIRequest>, script: string) {
+async function applyAmbientCueRanges(ai: Required<AIRequest>, script: string, trainingCueBank: boolean) {
   const cleanScript = stripAmbientRanges(script);
   const lines = cleanScript.split(/\r?\n/);
   const ambientStarts = lines.flatMap((line, startLine) => {
@@ -214,7 +222,10 @@ Rules:
   insertions.sort((a, b) => b.endLine - a.endLine).forEach(({ endLine, marker }) => {
     lines.splice(endLine + 1, 0, marker);
   });
-  return { script: lines.join("\n"), rangeCount: insertions.length };
+  const rangedScript = lines.join("\n");
+  if (!trainingCueBank) return { script: rangedScript, rangeCount: insertions.length };
+  const constrained = enforceTrainingCueBank(rangedScript);
+  return { script: constrained.script, rangeCount: insertions.length, cueBank: constrained.report };
 }
 
 function extractOpenAIText(data: Record<string, unknown>) {
@@ -325,6 +336,7 @@ function generationInstructions(settings: Record<string, unknown>) {
   const musicCueCount = Math.max(1, Math.min(20, Number(settings.musicCueCount) || 7));
   const optimizeCues = settings.optimizeCues !== false;
   const ambientRanges = settings.ambientRanges !== false;
+  const trainingCueBank = settings.trainingCueBank !== false;
   return `Convert the supplied prose into a complete REAPER PodcastVoice audio-drama cue script.
 
 Runtime and story:
@@ -361,6 +373,7 @@ ${ambientRanges ? `- Give every Ambient location a semantic range using paired c
 - Every Ambient START must have one matching END with the exact same location text.
 - These are story-position markers only: never include timecodes, seconds, or durations.
 - Never add START or END to SFX or Music cues.` : "- Do not add START or END range markers."}
+${trainingCueBank ? trainingCueBankInstructions() : ""}
 - Begin with EPISODE — followed by the title.
 - Return only the finished cue script, with no markdown fence or explanation.`;
 }
@@ -396,23 +409,24 @@ export async function POST(request: Request) {
     };
     if (!ai.apiKey) return NextResponse.json({ mode: "local", reason: "missing_api_key" });
     if (!ai.model) return NextResponse.json({ mode: "error", error: "Enter a model name in AI Settings." }, { status: 400 });
+    const settings = body.settings || {};
+    const trainingCueBank = settings.trainingCueBank !== false;
 
     if (body.action === "optimize_cues") {
       const script = String(body.script || "").trim();
       if (!script) return NextResponse.json({ mode: "error", error: "Generate a cue script first." }, { status: 400 });
-      const optimized = await optimizeCueScript(ai, script);
+      const optimized = await optimizeCueScript(ai, script, trainingCueBank);
       return NextResponse.json({ mode: "ai", provider, model: ai.model, ...optimized });
     }
     if (body.action === "ambient_ranges") {
       const script = String(body.script || "").trim();
       if (!script) return NextResponse.json({ mode: "error", error: "Generate a cue script first." }, { status: 400 });
-      const ranged = await applyAmbientCueRanges(ai, script);
+      const ranged = await applyAmbientCueRanges(ai, script, trainingCueBank);
       return NextResponse.json({ mode: "ai", provider, model: ai.model, ...ranged });
     }
 
     const story = String(body.story || "").trim();
     if (!story) return NextResponse.json({ mode: "error", error: "Paste a story first." }, { status: 400 });
-    const settings = body.settings || {};
     const input = `Title: ${String(settings.title || "Untitled")}
 Places: ${Number(settings.places) || 2}
 Source story:
@@ -438,6 +452,12 @@ ${story}`;
       musicCues = countCueType(script, "MUSIC");
       ambientStarts = script.split(/\r?\n/).filter((line) => /^\s*\[AMBIENT:.*\|\s*START\s*\]\s*$/i.test(line)).length;
       ambientEnds = script.split(/\r?\n/).filter((line) => /^\s*\[AMBIENT:.*\|\s*END\s*\]\s*$/i.test(line)).length;
+    }
+    let cueBank;
+    if (trainingCueBank) {
+      const constrained = enforceTrainingCueBank(script);
+      script = constrained.script;
+      cueBank = constrained.report;
     }
     if (words < MIN_SPOKEN_WORDS) {
       return NextResponse.json({
@@ -468,6 +488,7 @@ ${story}`;
       script,
       spokenWords: words,
       estimatedMinutes: Number((words / 145).toFixed(1)),
+      cueBank,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Story generation failed.";

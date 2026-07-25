@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  enforceTrainingCueBank,
+  TRAINING_CUE_BANK_META,
+  type TrainingCueBankReport,
+} from "./training-cue-bank";
 
 type Settings = {
   title: string;
@@ -11,6 +16,7 @@ type Settings = {
   musicCueCount: number;
   optimizeCues: boolean;
   ambientRanges: boolean;
+  trainingCueBank: boolean;
   elevenModel: string;
   performanceTaste: string;
   narratorVoiceId: string;
@@ -458,7 +464,14 @@ function localStoryboard(story: string, settings: Settings) {
   if (settings.ambientRanges) lines.push(`[AMBIENT: ${activeAmbient} | END]`);
   if (musicIndex < musicCueCount) lines.push(musicCue(musicIndex));
   const script = lines.join("\n");
-  return settings.optimizeCues ? optimizeCueScriptLocally(script) : script;
+  const optimized = settings.optimizeCues ? optimizeCueScriptLocally(script) : script;
+  return settings.trainingCueBank ? enforceTrainingCueBank(optimized).script : optimized;
+}
+
+function cueBankStatus(report?: TrainingCueBankReport) {
+  if (!report || report.total === 0) return "";
+  const covered = report.total - report.novel;
+  return ` Training bank: ${covered}/${report.total} SFX and Ambient cues covered; ${report.novel} new.`;
 }
 
 function cloneAISettings(settings: AISettings): AISettings {
@@ -481,6 +494,7 @@ export default function Home() {
     musicCueCount: 7,
     optimizeCues: true,
     ambientRanges: true,
+    trainingCueBank: true,
     elevenModel: "eleven_multilingual_v2",
     performanceTaste: "cinematic",
     narratorVoiceId: "cPoqAvGWCPfCfyPMwe4z",
@@ -507,21 +521,24 @@ export default function Home() {
   const draftProviderConfig = draftAISettings[draftAISettings.provider];
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(AI_STORAGE_KEY);
-      if (!saved) return;
-      const parsed = JSON.parse(saved) as Partial<AISettings>;
-      const restored: AISettings = {
-        provider: parsed.provider === "gemini" || parsed.provider === "compatible" ? parsed.provider : "openai",
-        openai: { ...defaultAISettings.openai, ...(parsed.openai || {}) },
-        gemini: { ...defaultAISettings.gemini, ...(parsed.gemini || {}) },
-        compatible: { ...defaultAISettings.compatible, ...(parsed.compatible || {}) },
-      };
-      setAISettings(restored);
-      setDraftAISettings(cloneAISettings(restored));
-    } catch {
-      localStorage.removeItem(AI_STORAGE_KEY);
-    }
+    const restore = window.setTimeout(() => {
+      try {
+        const saved = localStorage.getItem(AI_STORAGE_KEY);
+        if (!saved) return;
+        const parsed = JSON.parse(saved) as Partial<AISettings>;
+        const restored: AISettings = {
+          provider: parsed.provider === "gemini" || parsed.provider === "compatible" ? parsed.provider : "openai",
+          openai: { ...defaultAISettings.openai, ...(parsed.openai || {}) },
+          gemini: { ...defaultAISettings.gemini, ...(parsed.gemini || {}) },
+          compatible: { ...defaultAISettings.compatible, ...(parsed.compatible || {}) },
+        };
+        setAISettings(restored);
+        setDraftAISettings(cloneAISettings(restored));
+      } catch {
+        localStorage.removeItem(AI_STORAGE_KEY);
+      }
+    }, 0);
+    return () => window.clearTimeout(restore);
   }, []);
 
   useEffect(() => {
@@ -536,21 +553,24 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(VOICE_STORAGE_KEY);
-      if (!saved) return;
-      const parsed = JSON.parse(saved) as Partial<Settings>;
-      setSettings((previous) => ({
-        ...previous,
-        elevenModel: String(parsed.elevenModel || previous.elevenModel),
-        performanceTaste: String(parsed.performanceTaste || previous.performanceTaste),
-        narratorVoiceId: String(parsed.narratorVoiceId ?? previous.narratorVoiceId),
-        leadVoiceId: String(parsed.leadVoiceId ?? previous.leadVoiceId),
-        rivalVoiceId: String(parsed.rivalVoiceId ?? previous.rivalVoiceId),
-      }));
-    } catch {
-      localStorage.removeItem(VOICE_STORAGE_KEY);
-    }
+    const restore = window.setTimeout(() => {
+      try {
+        const saved = localStorage.getItem(VOICE_STORAGE_KEY);
+        if (!saved) return;
+        const parsed = JSON.parse(saved) as Partial<Settings>;
+        setSettings((previous) => ({
+          ...previous,
+          elevenModel: String(parsed.elevenModel || previous.elevenModel),
+          performanceTaste: String(parsed.performanceTaste || previous.performanceTaste),
+          narratorVoiceId: String(parsed.narratorVoiceId ?? previous.narratorVoiceId),
+          leadVoiceId: String(parsed.leadVoiceId ?? previous.leadVoiceId),
+          rivalVoiceId: String(parsed.rivalVoiceId ?? previous.rivalVoiceId),
+        }));
+      } catch {
+        localStorage.removeItem(VOICE_STORAGE_KEY);
+      }
+    }, 0);
+    return () => window.clearTimeout(restore);
   }, []);
 
   function update<K extends keyof Settings>(key: K, value: Settings[K]) {
@@ -618,7 +638,8 @@ export default function Home() {
     if (!activeProviderConfig.apiKey.trim()) {
       setOutput(fallback);
       const words = spokenWordCount(fallback);
-      setStatus(`Local seven-minute script created: ${words.toLocaleString()} spoken words, about ${(words / WORDS_PER_MINUTE).toFixed(1)} minutes. Add an AI key for a richer adaptation.`);
+      const bank = settings.trainingCueBank ? enforceTrainingCueBank(fallback).report : undefined;
+      setStatus(`Local seven-minute script created: ${words.toLocaleString()} spoken words, about ${(words / WORDS_PER_MINUTE).toFixed(1)} minutes.${cueBankStatus(bank)} Add an AI key for a richer adaptation.`);
       setGenerating(false);
       return;
     }
@@ -643,10 +664,11 @@ export default function Home() {
         error?: string;
         spokenWords?: number;
         estimatedMinutes?: number;
+        cueBank?: TrainingCueBankReport;
       };
       if (!response.ok || !data.script) throw new Error(data.error || "The model did not return a cue script.");
       setOutput(data.script);
-      setStatus(`${providerLabels[aiSettings.provider]} created ${Number(data.spokenWords || spokenWordCount(data.script)).toLocaleString()} spoken words, about ${data.estimatedMinutes || (spokenWordCount(data.script) / WORDS_PER_MINUTE).toFixed(1)} minutes.`);
+      setStatus(`${providerLabels[aiSettings.provider]} created ${Number(data.spokenWords || spokenWordCount(data.script)).toLocaleString()} spoken words, about ${data.estimatedMinutes || (spokenWordCount(data.script) / WORDS_PER_MINUTE).toFixed(1)} minutes.${cueBankStatus(data.cueBank)}`);
     } catch (error) {
       setOutput(fallback);
       const message = error instanceof Error ? error.message : "AI generation failed.";
@@ -663,10 +685,14 @@ export default function Home() {
     }
     setOptimizing(true);
     setStatus(`Optimizing SFX, Ambient, and Music cue data with ${activeProviderConfig.apiKey ? providerLabels[aiSettings.provider] : "the local optimizer"}…`);
-    const localVersion = optimizeCueScriptLocally(output);
+    const locallyOptimized = optimizeCueScriptLocally(output);
+    const localPolicy = settings.trainingCueBank
+      ? enforceTrainingCueBank(locallyOptimized)
+      : { script: locallyOptimized, report: undefined };
+    const localVersion = localPolicy.script;
     if (!activeProviderConfig.apiKey.trim()) {
       setOutput(localVersion);
-      setStatus("Cue data optimized locally: short SFX search terms, location-based ambience, and searchable music briefs.");
+      setStatus(`Cue data optimized locally: short SFX search terms, location-based ambience, and searchable music briefs.${cueBankStatus(localPolicy.report)}`);
       setOptimizing(false);
       return;
     }
@@ -677,6 +703,7 @@ export default function Home() {
         body: JSON.stringify({
           action: "optimize_cues",
           script: output,
+          settings,
           ai: {
             provider: aiSettings.provider,
             apiKey: activeProviderConfig.apiKey,
@@ -685,10 +712,15 @@ export default function Home() {
           },
         }),
       });
-      const data = await response.json() as { script?: string; error?: string; optimizedCount?: number };
+      const data = await response.json() as {
+        script?: string;
+        error?: string;
+        optimizedCount?: number;
+        cueBank?: TrainingCueBankReport;
+      };
       if (!response.ok || !data.script) throw new Error(data.error || "Cue optimization failed.");
       setOutput(data.script);
-      setStatus(`${providerLabels[aiSettings.provider]} optimized ${Number(data.optimizedCount || 0)} SFX, Ambient, and Music cues without changing the story text.`);
+      setStatus(`${providerLabels[aiSettings.provider]} optimized ${Number(data.optimizedCount || 0)} SFX, Ambient, and Music cues without changing the story text.${cueBankStatus(data.cueBank)}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Cue optimization failed.";
       setOutput(localVersion);
@@ -705,10 +737,14 @@ export default function Home() {
     }
     setRanging(true);
     setStatus(`Reading the story to find where each Ambient location stops with ${activeProviderConfig.apiKey ? providerLabels[aiSettings.provider] : "the local range planner"}…`);
-    const localVersion = applyAmbientRangesLocally(output);
+    const locallyRanged = applyAmbientRangesLocally(output);
+    const localPolicy = settings.trainingCueBank
+      ? enforceTrainingCueBank(locallyRanged)
+      : { script: locallyRanged, report: undefined };
+    const localVersion = localPolicy.script;
     if (!activeProviderConfig.apiKey.trim()) {
       setOutput(localVersion);
-      setStatus("Ambient ranges added without timecodes. Each location now has a START and END cue; SFX cues were not changed.");
+      setStatus(`Ambient ranges added without timecodes. Each location now has a START and END cue; SFX cues were not changed.${cueBankStatus(localPolicy.report)}`);
       setRanging(false);
       return;
     }
@@ -719,6 +755,7 @@ export default function Home() {
         body: JSON.stringify({
           action: "ambient_ranges",
           script: output,
+          settings,
           ai: {
             provider: aiSettings.provider,
             apiKey: activeProviderConfig.apiKey,
@@ -727,10 +764,15 @@ export default function Home() {
           },
         }),
       });
-      const data = await response.json() as { script?: string; error?: string; rangeCount?: number };
+      const data = await response.json() as {
+        script?: string;
+        error?: string;
+        rangeCount?: number;
+        cueBank?: TrainingCueBankReport;
+      };
       if (!response.ok || !data.script) throw new Error(data.error || "Ambient cue range analysis failed.");
       setOutput(data.script);
-      setStatus(`${providerLabels[aiSettings.provider]} added ${Number(data.rangeCount || 0)} Ambient START/END range pairs without changing SFX or story text.`);
+      setStatus(`${providerLabels[aiSettings.provider]} added ${Number(data.rangeCount || 0)} Ambient START/END range pairs without changing SFX or story text.${cueBankStatus(data.cueBank)}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Ambient cue range analysis failed.";
       setOutput(localVersion);
@@ -871,6 +913,13 @@ export default function Home() {
           <div className="toggle-row compact ambient-range-option">
             <div><strong>Ambient cue ranges</strong><small>Add semantic START/END cues where each place begins and stops—no timecodes and no SFX ranges</small></div>
             <button aria-pressed={settings.ambientRanges} className={`toggle ${settings.ambientRanges ? "on" : ""}`} onClick={() => update("ambientRanges", !settings.ambientRanges)}><span /></button>
+          </div>
+          <div className="toggle-row compact cue-bank-option">
+            <div>
+              <strong>Training Cue Bank · Demo Lock</strong>
+              <small>{TRAINING_CUE_BANK_META.distinctSfx} exact SFX + {TRAINING_CUE_BANK_META.distinctAmbient} exact Ambient names; maximum one new cue. Music stays on MUSIC POD.</small>
+            </div>
+            <button aria-pressed={settings.trainingCueBank} className={`toggle ${settings.trainingCueBank ? "on" : ""}`} onClick={() => update("trainingCueBank", !settings.trainingCueBank)}><span /></button>
           </div>
         </div>
         <div className="voice-direction">
