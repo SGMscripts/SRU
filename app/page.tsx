@@ -178,14 +178,32 @@ const groqModels = [
     label: "Groq Studio · GPT-OSS 120B",
     description: "More story detail while remaining very fast",
   },
+  {
+    id: "llama-3.3-70b-versatile",
+    label: "Llama 3.3 70B · Groq",
+    description: "Fast, capable long-form story and cue writing",
+  },
+] as const;
+
+const openAIModels = [
+  {
+    id: "gpt-5-nano",
+    label: "OpenAI Fast · GPT-5 nano",
+    description: "Fastest, most cost-efficient GPT-5 option",
+  },
+  {
+    id: "gpt-5-mini",
+    label: "OpenAI Story · GPT-5 mini",
+    description: "A stronger fast choice for structured story drafts",
+  },
 ] as const;
 
 const defaultAISettings: AISettings = {
   provider: "openai",
-  openai: { apiKey: "", model: "gpt-5.6-terra", baseUrl: "" },
+  openai: { apiKey: "", model: "gpt-5-nano", baseUrl: "" },
   gemini: { apiKey: "", model: "gemini-3.6-flash", baseUrl: "" },
   groq: { apiKey: "", model: "openai/gpt-oss-20b", baseUrl: "https://api.groq.com/openai/v1" },
-  compatible: { apiKey: "", model: "openai/gpt-5.6-terra", baseUrl: "https://openrouter.ai/api/v1" },
+  compatible: { apiKey: "", model: "gpt-5-nano", baseUrl: "https://openrouter.ai/api/v1" },
 };
 
 const providerLabels: Record<AIProvider, string> = {
@@ -2703,9 +2721,24 @@ export default function Home() {
             <input
               value={draftProviderConfig.model}
               onChange={(event) => updateDraftProvider("model", event.target.value)}
-              placeholder={draftAISettings.provider === "openai" ? "gpt-5.6-terra" : draftAISettings.provider === "gemini" ? "gemini-3.6-flash" : draftAISettings.provider === "groq" ? "openai/gpt-oss-20b" : "Provider model ID"}
+              placeholder={draftAISettings.provider === "openai" ? "gpt-5-nano" : draftAISettings.provider === "gemini" ? "gemini-3.6-flash" : draftAISettings.provider === "groq" ? "openai/gpt-oss-20b" : "Provider model ID"}
             />
           </label>
+          {draftAISettings.provider === "openai" && <div className="groq-models" role="group" aria-label="OpenAI story model">
+            <strong>Fast ChatGPT API models</strong>
+            <div>
+              {openAIModels.map((model) => <button
+                key={model.id}
+                type="button"
+                className={draftProviderConfig.model === model.id ? "active" : ""}
+                onClick={() => updateDraftProvider("model", model.id)}
+              >
+                <span>{model.label}</span>
+                <small>{model.description}</small>
+              </button>)}
+            </div>
+            <p><a className="api-key-link" href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">Get an OpenAI API key ↗</a></p>
+          </div>}
           {draftAISettings.provider === "groq" && <div className="groq-models" role="group" aria-label="Groq story model">
             <strong>Fast REAPER-ready models</strong>
             <div>
@@ -2719,7 +2752,7 @@ export default function Home() {
                 <small>{model.description}</small>
               </button>)}
             </div>
-            <p>Groq uses its fixed official API endpoint. Choose Fast for the quickest story, SFX optimization, and Ambient range hand-off.</p>
+            <p>Groq uses its fixed official API endpoint. Choose Fast for the quickest story, SFX optimization, and Ambient range hand-off. <a className="api-key-link" href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Get a Groq API key ↗</a></p>
           </div>}
           {draftAISettings.provider === "compatible" && <label>
             OpenAI-compatible base URL

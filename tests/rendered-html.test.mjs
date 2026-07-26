@@ -139,6 +139,12 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(page, /groq:\s*\{ apiKey: "", model: "openai\/gpt-oss-20b"/);
   assert.match(page, /Groq Fast · GPT-OSS 20B/);
   assert.match(page, /Groq Studio · GPT-OSS 120B/);
+  assert.match(page, /Llama 3\.3 70B · Groq/);
+  assert.match(page, /llama-3\.3-70b-versatile/);
+  assert.match(page, /OpenAI Fast · GPT-5 nano/);
+  assert.match(page, /OpenAI Story · GPT-5 mini/);
+  assert.match(page, /https:\/\/platform\.openai\.com\/api-keys/);
+  assert.match(page, /https:\/\/console\.groq\.com\/keys/);
   assert.match(page, /Groq API key \(gsk_/);
   assert.match(page, /Training Cue Bank · Demo Lock/);
   assert.match(page, /REMOTE_REAPER_STORAGE_KEY/);

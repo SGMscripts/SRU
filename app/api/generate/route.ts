@@ -459,7 +459,7 @@ export async function POST(request: Request) {
       }, { status: 400 });
     }
     const defaults = {
-      openai: "gpt-5.6-terra",
+      openai: "gpt-5-nano",
       gemini: "gemini-3.6-flash",
       groq: "openai/gpt-oss-20b",
       compatible: "",

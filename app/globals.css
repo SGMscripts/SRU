@@ -203,6 +203,8 @@ pre { margin:22px 0 0; padding:20px; white-space:pre-wrap; overflow:auto; max-he
 .groq-models button small,.groq-models p { color:#a69e92; font-size:10px; line-height:1.35; }
 .groq-models button.active small { color:#d8e6a4; }
 .groq-models p { margin:0; }
+.api-key-link { color:#dff78a; text-decoration:underline; text-underline-offset:2px; }
+.api-key-link:hover { color:#f4ffc4; }
 .ai-settings-status { min-height:17px; color:#d8cfbf; font:11px ui-monospace,SFMono-Regular,Menlo,monospace; margin:14px 0 8px; }
 .modal-actions { display:flex; justify-content:flex-end; gap:8px; padding-top:13px; border-top:1px solid #3b3834; }
 .modal-actions button { border-radius:8px; padding:9px 12px; font-size:11px; }
