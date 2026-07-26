@@ -2196,6 +2196,36 @@ export default function Home() {
     void sendReaperCommand(transportPlayPauseAction);
   }
 
+  const storyTransport = output ? <section className="story-transport" aria-label="REAPER story timeline">
+    <div className="story-transport-head">
+      <div><span>REAPER-READY AUDIO PLAYBACK</span><strong>Story edit cursor</strong></div>
+      <p>Click or drag to seek the REAPER edit cursor, jump between cues, then play the audio story.</p>
+    </div>
+    <div className="story-transport-controls">
+      <button type="button" className={`story-play ${timelinePlaying ? "playing" : ""}`} onClick={toggleTimelinePlayback} disabled={runningReaperAction !== null} aria-label={timelinePlaying ? "Pause REAPER playback" : "Play REAPER audio story"} title="Play / Pause in REAPER">
+        {timelinePlaying ? "Ⅱ" : "▶"}
+      </button>
+      <output className="story-time" aria-label="Edit cursor time">{formatReaperTimecode(timelineCursorSeconds)} <span>/ {formatReaperTimecode(timelineDurationSeconds)}</span></output>
+      <div className={`story-timeline ${timelineScrubbing ? "scrubbing" : ""}`} role="slider" tabIndex={0} aria-label="REAPER edit cursor" aria-valuemin={0} aria-valuemax={Math.round(timelineDurationSeconds)} aria-valuenow={Math.round(timelineCursorSeconds)} aria-valuetext={`${formatTimelineTime(timelineCursorSeconds)} of ${formatTimelineTime(timelineDurationSeconds)}`}
+        onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setTimelineScrubbing(true); updateTimelineCursorFromPointer(event); }}
+        onPointerMove={(event) => { if (timelineScrubbing) updateTimelineCursorFromPointer(event); }}
+        onPointerUp={(event) => { if (!timelineScrubbing) return; updateTimelineCursorFromPointer(event, true); setTimelineScrubbing(false); }}
+        onPointerCancel={() => setTimelineScrubbing(false)}
+        onKeyDown={(event) => { const adjustment = event.key === "ArrowLeft" ? -5 : event.key === "ArrowRight" ? 5 : 0; if (!adjustment) return; event.preventDefault(); commitTimelineCursor(timelineCursorSeconds + adjustment); }}
+      >
+        <div className="story-timeline-fill" style={{ width: `${(timelineCursorSeconds / timelineDurationSeconds) * 100}%` }} />
+        {storyTimelineMarkers.map((marker, index) => <span key={`${marker.type}-${marker.seconds}-${index}`} className={`story-marker ${marker.type.toLowerCase()}`} style={{ left: `${Math.min(100, (marker.seconds / timelineDurationSeconds) * 100)}%` }} title={`${formatTimelineTime(marker.seconds)} · ${marker.type}: ${marker.label}`} aria-hidden="true" />)}
+        <span className="story-cursor" style={{ left: `${(timelineCursorSeconds / timelineDurationSeconds) * 100}%` }} aria-hidden="true" />
+      </div>
+    </div>
+    <div className="story-transport-actions" aria-label="Timeline controls">
+      <button type="button" onClick={() => commitTimelineCursor(0)} disabled={runningReaperAction !== null}>↺ Start</button>
+      <button type="button" onClick={() => commitTimelineCursor(timelineCursorSeconds - 5)} disabled={runningReaperAction !== null}>−5 sec</button>
+      <button type="button" onClick={jumpToNextCue} disabled={runningReaperAction !== null}>Next cue →</button>
+    </div>
+    <div className="story-legend"><span className="sfx">SFX</span><span className="ambient">Ambient</span><span className="music">Music</span><i>Click or drag the timeline · use the REAPER seek action</i></div>
+  </section> : null;
+
   return <main className="shell">
     <section className="hero">
       <div className="hero-toolbar">
@@ -2216,6 +2246,7 @@ export default function Home() {
         <div className="panel-head"><h2>1. Your normal story</h2><button className="text-button" onClick={() => setStory(sample)}>Load example</button></div>
         <textarea aria-label="Normal story" value={story} onChange={(event) => setStory(event.target.value)} placeholder="Paste your story here…" />
         <p className="hint">Paste prose, a chapter, or a scene. Short material will be expanded into a complete dramatic arc.</p>
+        {storyTransport}
       </div>
 
       <div className="panel director-panel">
@@ -2435,74 +2466,7 @@ export default function Home() {
             <button className="download" onClick={download}>Download .txt</button>
           </div>}
         </div>
-        {output ? <>
-          <section className="story-transport" aria-label="REAPER story timeline">
-            <div className="story-transport-head">
-              <div><span>DAW TRANSPORT</span><strong>Story edit cursor</strong></div>
-              <p>Click or drag to seek the REAPER edit cursor, jump between cues, then play the audio story.</p>
-            </div>
-            <div className="story-transport-controls">
-              <button
-                type="button"
-                className={`story-play ${timelinePlaying ? "playing" : ""}`}
-                onClick={toggleTimelinePlayback}
-                disabled={runningReaperAction !== null}
-                aria-label={timelinePlaying ? "Pause REAPER playback" : "Play REAPER audio story"}
-                title="Play / Pause in REAPER"
-              >
-                {timelinePlaying ? "Ⅱ" : "▶"}
-              </button>
-              <output className="story-time" aria-label="Edit cursor time">{formatReaperTimecode(timelineCursorSeconds)} <span>/ {formatReaperTimecode(timelineDurationSeconds)}</span></output>
-              <div
-                className={`story-timeline ${timelineScrubbing ? "scrubbing" : ""}`}
-                role="slider"
-                tabIndex={0}
-                aria-label="REAPER edit cursor"
-                aria-valuemin={0}
-                aria-valuemax={Math.round(timelineDurationSeconds)}
-                aria-valuenow={Math.round(timelineCursorSeconds)}
-                aria-valuetext={`${formatTimelineTime(timelineCursorSeconds)} of ${formatTimelineTime(timelineDurationSeconds)}`}
-                onPointerDown={(event) => {
-                  event.currentTarget.setPointerCapture(event.pointerId);
-                  setTimelineScrubbing(true);
-                  updateTimelineCursorFromPointer(event);
-                }}
-                onPointerMove={(event) => {
-                  if (timelineScrubbing) updateTimelineCursorFromPointer(event);
-                }}
-                onPointerUp={(event) => {
-                  if (!timelineScrubbing) return;
-                  updateTimelineCursorFromPointer(event, true);
-                  setTimelineScrubbing(false);
-                }}
-                onPointerCancel={() => setTimelineScrubbing(false)}
-                onKeyDown={(event) => {
-                  const adjustment = event.key === "ArrowLeft" ? -5 : event.key === "ArrowRight" ? 5 : 0;
-                  if (!adjustment) return;
-                  event.preventDefault();
-                  commitTimelineCursor(timelineCursorSeconds + adjustment);
-                }}
-              >
-                <div className="story-timeline-fill" style={{ width: `${(timelineCursorSeconds / timelineDurationSeconds) * 100}%` }} />
-                {storyTimelineMarkers.map((marker, index) => <span
-                  key={`${marker.type}-${marker.seconds}-${index}`}
-                  className={`story-marker ${marker.type.toLowerCase()}`}
-                  style={{ left: `${Math.min(100, (marker.seconds / timelineDurationSeconds) * 100)}%` }}
-                  title={`${formatTimelineTime(marker.seconds)} · ${marker.type}: ${marker.label}`}
-                  aria-hidden="true"
-                />)}
-                <span className="story-cursor" style={{ left: `${(timelineCursorSeconds / timelineDurationSeconds) * 100}%` }} aria-hidden="true" />
-              </div>
-            </div>
-            <div className="story-transport-actions" aria-label="Timeline controls">
-              <button type="button" onClick={() => commitTimelineCursor(0)} disabled={runningReaperAction !== null}>↺ Start</button>
-              <button type="button" onClick={() => commitTimelineCursor(timelineCursorSeconds - 5)} disabled={runningReaperAction !== null}>−5 sec</button>
-              <button type="button" onClick={jumpToNextCue} disabled={runningReaperAction !== null}>Next cue →</button>
-            </div>
-            <div className="story-legend"><span className="sfx">SFX</span><span className="ambient">Ambient</span><span className="music">Music</span><i>Click or drag the timeline · use the REAPER seek action</i></div>
-          </section>
-          <pre>{output}</pre>
-        </> : <div className="empty"><div className="terminal-mark">›_</div><h3>Your selected production storyboard appears here.</h3><p>Choose three minutes or the original seven-minute format. Both include structured voice directions and cue tracks for REAPER.</p></div>}
+        {output ? <pre>{output}</pre> : <div className="empty"><div className="terminal-mark">›_</div><h3>Your selected production storyboard appears here.</h3><p>Choose three minutes or the original seven-minute format. Both include structured voice directions and cue tracks for REAPER.</p></div>}
       </div>
 
       <section className="panel reaper-panel" aria-labelledby="reaper-heading">
