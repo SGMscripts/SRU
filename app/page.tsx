@@ -230,9 +230,9 @@ const reaperActions: ReaperAction[] = [
   },
   {
     id: "elevenlabs",
-    label: "Generate Voices",
-    description: "Open the ElevenLabs voice generator for the imported character tracks.",
-    command: "_RS3f041675526b507bc147e0a1002e05e5b868215a",
+    label: "Generate All Voices",
+    description: "Generate every imported character voice on its own VO Audio track.",
+    command: "_RS9acc96ef9b416e2be08f75b70bc9d0143a5391e3",
     tone: "blue",
   },
   {
@@ -256,7 +256,7 @@ const transportSeekAction: ReaperAction = {
   id: "transport-seek",
   label: "Move edit cursor",
   description: "Move the REAPER edit cursor to the selected story moment.",
-  command: "",
+  command: "_RS905359b5cf6473ddef8a02e350cd4115c357ca1c",
   tone: "blue",
 };
 
@@ -2103,9 +2103,7 @@ export default function Home() {
       }
     }
 
-    const command = action.id === "transport-seek"
-      ? `SET/POS/${Math.max(0, Number(cursorSeconds) || 0).toFixed(3)}`
-      : action.command;
+    const command = action.command;
     if (!command) {
       setReaperStatus("This REAPER command is not configured.");
       return;
@@ -2157,6 +2155,11 @@ export default function Home() {
     const next = Math.max(0, Math.min(timelineDurationSeconds, seconds));
     setTimelineCursorSeconds(next);
     void sendReaperCommand(transportSeekAction, next);
+  }
+
+  function jumpToNextCue() {
+    const nextCue = storyTimelineMarkers.find((marker) => marker.seconds > timelineCursorSeconds + 0.25);
+    commitTimelineCursor(nextCue?.seconds ?? 0);
   }
 
   function updateTimelineCursorFromPointer(event: ReactPointerEvent<HTMLDivElement>, commit = false) {
@@ -2415,7 +2418,7 @@ export default function Home() {
           <section className="story-transport" aria-label="REAPER story timeline">
             <div className="story-transport-head">
               <div><span>DAW TRANSPORT</span><strong>Story edit cursor</strong></div>
-              <p>Click or drag to move the REAPER edit cursor, then play the audio story.</p>
+              <p>Click or drag to seek the REAPER edit cursor, jump between cues, then play the audio story.</p>
             </div>
             <div className="story-transport-controls">
               <button
@@ -2470,7 +2473,12 @@ export default function Home() {
                 <span className="story-cursor" style={{ left: `${(timelineCursorSeconds / timelineDurationSeconds) * 100}%` }} aria-hidden="true" />
               </div>
             </div>
-            <div className="story-legend" aria-hidden="true"><span className="sfx">SFX</span><span className="ambient">Ambient</span><span className="music">Music</span><i>Play/Pause command: _dbab6e45e2cf4c988650dfad12851cc1</i></div>
+            <div className="story-transport-actions" aria-label="Timeline controls">
+              <button type="button" onClick={() => commitTimelineCursor(0)} disabled={runningReaperAction !== null}>↺ Start</button>
+              <button type="button" onClick={() => commitTimelineCursor(timelineCursorSeconds - 5)} disabled={runningReaperAction !== null}>−5 sec</button>
+              <button type="button" onClick={jumpToNextCue} disabled={runningReaperAction !== null}>Next cue →</button>
+            </div>
+            <div className="story-legend"><span className="sfx">SFX</span><span className="ambient">Ambient</span><span className="music">Music</span><i>Click or drag the timeline · use the REAPER seek action</i></div>
           </section>
           <pre>{output}</pre>
         </> : <div className="empty"><div className="terminal-mark">›_</div><h3>Your selected production storyboard appears here.</h3><p>Choose three minutes or the original seven-minute format. Both include structured voice directions and cue tracks for REAPER.</p></div>}
