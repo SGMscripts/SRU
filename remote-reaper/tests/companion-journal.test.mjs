@@ -384,6 +384,7 @@ test("requires exact local approval before the safety journal and REAPER build",
     ]);
     assert.deepEqual(approvalContext, {
       title: "EPISODE — THE LAST SIGNAL",
+      action: "build-play",
       runtimeMinutes: 3,
       requestId: "approved-build-0001",
       commandSha256: commandHash("build-play", 3, build.script),
@@ -714,6 +715,75 @@ test("the manual paid-generation lock runs before any supplied approval callback
     assert.equal(approvalCalls, 0);
     assert.equal(journalBegins, 0);
     assert.equal(reaperRuns, 0);
+    await companion.stop();
+  });
+});
+
+test("remote Create requires the same exact Mac approval as a paid build", async () => {
+  await withFakeWebSocket(async () => {
+    let approvedAction = "";
+    let reaperAction = "";
+    const journal = {
+      filePath: "/tmp/injected-journal.json",
+      async initialize() {},
+      async readiness() {
+        return { ready: true, message: "clear" };
+      },
+      async begin() {},
+      async complete() {},
+      async needsAttention() {},
+    };
+    const reaper = {
+      async readiness() {
+        return { reaperOnline: true, message: "ready" };
+      },
+      async runJob(value, { allowPaidVoiceGeneration, onStatus }) {
+        assert.equal(allowPaidVoiceGeneration, true);
+        reaperAction = value.action;
+        onStatus({
+          state: "complete",
+          stage: "complete",
+          message: "Created.",
+          done: true,
+          error: false,
+        });
+      },
+    };
+    const companion = createCompanion({
+      pairingToken: "0123456789abcdef0123456789abcdef",
+      allowPaidVoiceGeneration: true,
+      async approvePaidBuild(context) {
+        approvedAction = context.action;
+        return {
+          approved: true,
+          reason: "approved",
+          binding: {
+            requestId: context.requestId,
+            commandSha256: context.commandSha256,
+            scriptSha256: context.scriptSha256,
+            expiresAt: context.expiresAt,
+          },
+        };
+      },
+      reaper,
+      journal,
+      logger: { info() {}, error() {} },
+    });
+    await companion.start();
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.emit("message", {
+      data: JSON.stringify(command({
+        requestId: "approved-create-0001",
+        action: "create",
+      })),
+    });
+    await waitForMessage(
+      socket,
+      (message) => message.type === "command_status" && message.state === "complete",
+    );
+    assert.equal(approvedAction, "create");
+    assert.equal(reaperAction, "create");
     await companion.stop();
   });
 });

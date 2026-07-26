@@ -66,7 +66,7 @@ export async function startRelay({
       return;
     }
     response.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
-    response.end("Story Cue Studio remote relay is running.\n");
+    response.end("Audio Story Engine remote relay is running.\n");
   });
   const wss = new WebSocketServer({
     server,
@@ -305,7 +305,7 @@ export async function startRelay({
   });
   const address = server.address();
   const listeningPort = typeof address === "object" && address ? address.port : port;
-  logger.info?.(`Story Cue Studio relay listening on ws://${host}:${listeningPort}`);
+  logger.info?.(`Audio Story Engine relay listening on ws://${host}:${listeningPort}`);
 
   return {
     port: listeningPort,

@@ -95,6 +95,10 @@ function exactApprovalMatches(decision, context) {
   );
 }
 
+function usesPaidVoiceGeneration(action) {
+  return action === "create" || action === "build-play";
+}
+
 export function createCompanion({
   relayUrl = process.env.REAPER_RELAY_URL || "ws://127.0.0.1:8787",
   machineId = process.env.REAPER_MACHINE_ID || "sruthin-studio",
@@ -214,7 +218,7 @@ export function createCompanion({
       });
       return;
     }
-    if (command.action === "build-play" && !allowPaidVoiceGeneration) {
+    if (usesPaidVoiceGeneration(command.action) && !allowPaidVoiceGeneration) {
       const status = {
         state: "error",
         stage: "paid-generation-lock",
@@ -230,17 +234,18 @@ export function createCompanion({
     let journalStarted = false;
     busy = true;
     try {
-      if (command.action === "build-play" && approvePaidBuild) {
+      if (usesPaidVoiceGeneration(command.action) && approvePaidBuild) {
         sendStatus(command.requestId, {
           state: "progress",
           stage: "awaiting-local-approval",
-          message: "Waiting for the REAPER Mac owner to approve this exact build.",
+          message: "Waiting for the REAPER Mac owner to approve this exact voice-generation request.",
           done: false,
           error: false,
         });
 
         const approvalContext = {
           title: episodeTitle(command.script),
+          action: command.action,
           runtimeMinutes: command.runtimeMinutes,
           requestId: command.requestId,
           commandSha256: command.commandSha256,
@@ -275,7 +280,7 @@ export function createCompanion({
           const status = {
             state: "error",
             stage: "command-expired-after-approval",
-            message: "The remote build request expired while awaiting approval. Nothing was changed and no voice credits were used.",
+            message: "The remote voice-generation request expired while awaiting approval. Nothing was changed and no voice credits were used.",
             done: true,
             error: true,
           };
@@ -287,7 +292,7 @@ export function createCompanion({
         sendStatus(command.requestId, {
           state: "progress",
           stage: "local-approval-granted",
-          message: "The REAPER Mac owner approved this exact build.",
+          message: "The REAPER Mac owner approved this exact voice-generation request.",
           done: false,
           error: false,
         });
@@ -361,7 +366,7 @@ export function createCompanion({
   async function connect() {
     if (stopped) return;
     const readiness = await combinedReadiness();
-    logger.info?.(`Connecting ${config.machineId} to the Story Cue Studio relay…`);
+    logger.info?.(`Connecting ${config.machineId} to the Audio Story Engine relay…`);
     socket = new WebSocket(config.relayUrl);
 
     socket.addEventListener("open", () => {

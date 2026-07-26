@@ -121,10 +121,10 @@ async function runDemo() {
           : "   Copy the complete link above, including everything after #.",
       );
       console.log("2. Keep REAPER and this Terminal window open.");
-      console.log("3. Use Import Story or Recall Cues in Story Cue Studio.");
+      console.log("3. Use Import Story, Recall Cues, or Create in Audio Story Engine.");
       console.log(`New connections and commands are accepted until ${acceptanceText}.`);
       console.log(`Accepted work may report status until the demo closes at ${stopText}.`);
-      console.log("Each Build Immersive & Play request opens one approval dialog on this Mac.");
+      console.log("Each Create or Build Immersive & Play request opens one approval dialog on this Mac.");
       console.log('The default is Deny; click "Approve This Build" within 45 seconds to continue.');
       console.log("Treat the link like a password and share it only with the intended guest.\n");
     }

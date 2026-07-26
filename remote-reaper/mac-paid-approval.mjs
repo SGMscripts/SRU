@@ -13,7 +13,8 @@ on run argv
   set episodeTitle to item 1 of argv
   set runtimeLabel to item 2 of argv
   set requestLabel to item 3 of argv
-  set dialogText to "A remote guest requested Build Immersive & Play." & return & return & "Episode: " & episodeTitle & return & "Target runtime: " & runtimeLabel & return & "Request: " & requestLabel & return & return & "Approving may use ElevenLabs credits and will change the open REAPER project."
+  set actionLabel to item 4 of argv
+  set dialogText to "A remote guest requested " & actionLabel & "." & return & return & "Episode: " & episodeTitle & return & "Target runtime: " & runtimeLabel & return & "Request: " & requestLabel & return & return & "Approving may use ElevenLabs credits and will change the open REAPER project."
   try
     -- Standard Additions display dialog: Deny is both the default and cancel button.
     set answer to «event sysodlog» dialogText given «class btns»:{"Deny", "Approve This Build"}, «class dflt»:"Deny", «class cbtn»:"Deny", «class appr»:"Story Cue Studio", «class givu»:${APPLESCRIPT_APPROVAL_TIMEOUT_SECONDS}
@@ -42,13 +43,17 @@ function sanitizedLabel(value, fallback, maxLength) {
   return clean || fallback;
 }
 
-function approvalArguments({ title, runtimeMinutes, requestId } = {}) {
+function approvalArguments({ title, runtimeMinutes, requestId, action } = {}) {
   const runtime = Number(runtimeMinutes) === 7 ? "7 minutes" : "3 minutes";
   const shortRequest = sanitizedLabel(requestId, "unknown", 128).slice(-12);
+  const actionLabel = action === "create"
+    ? "Create (Import Story, Recall Cues, Generate All Voices)"
+    : "Build Immersive & Play";
   return [
     sanitizedLabel(title, "Untitled storyboard", 100),
     runtime,
     shortRequest,
+    actionLabel,
   ];
 }
 

@@ -132,6 +132,8 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(page, /transport-play-pause/);
   assert.match(page, /function createReaperAudio/);
   assert.match(page, /Import Story → wait 2 sec → Recall Cues → wait 2 sec → Generate All Voices/);
+  assert.match(page, /sendRemoteReaperCommand\(createReaperAction\)/);
+  assert.match(page, /action\.id === "create" \|\| action\.id === "build-play"/);
   assert.match(page, /_dbab6e45e2cf4c988650dfad12851cc1/);
   assert.match(page, /transport-seek/);
   assert.match(page, /_RS905359b5cf6473ddef8a02e350cd4115c357ca1c/);
@@ -188,11 +190,11 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(page, /Invite Invalid/);
   assert.match(page, /Create the private guest link/);
   assert.match(page, /Download Mac demo package/);
-  assert.match(page, /Start Remote REAPER Demo\.command/);
+  assert.match(page, /Start Audio Story Engine Remote Demo\.command/);
   assert.match(page, /Advanced \/ manual connection/);
   assert.match(page, /replayable bearer link until it expires or the Mac launcher/);
   assert.match(page, /separately approve this exact request before ElevenLabs credits/);
-  assert.match(page, /Every paid voice build requires separate approval/);
+  assert.match(page, /Every remote request that can generate voices requires/);
   assert.doesNotMatch(page, /setShowPairingToken/);
   assert.doesNotMatch(page, /type=\{showPairingToken/);
   assert.match(page, /type="password"\s+value=\{draftRemoteSettings\.pairingToken\}/);

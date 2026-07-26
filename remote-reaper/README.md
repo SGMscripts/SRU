@@ -1,9 +1,9 @@
-# Story Cue Studio Remote REAPER
+# Audio Story Engine Remote REAPER
 
-This companion adds the different-network path shown in Story Cue Studio:
+This companion adds the different-network path shown in Audio Story Engine:
 
 ```text
-Story Cue Studio website
+Audio Story Engine website
         ↕ secure WebSocket
 Public Node.js relay
         ↕ secure WebSocket
@@ -72,9 +72,9 @@ Install Node.js 22.13 or newer and Cloudflare's tunnel helper once:
 brew install cloudflared
 ```
 
-Then double-click `Start Remote REAPER Demo.command`. The launcher installs its
-small Node dependency on first use, starts the relay, companion, and temporary
-Cloudflare Quick Tunnel, and prints one complete Story Cue Studio guest link.
+Then double-click `Start Audio Story Engine Remote Demo.command`. The launcher
+installs its small Node dependency on first use, starts the relay, companion, and temporary
+Cloudflare Quick Tunnel, and prints one complete Audio Story Engine guest link.
 On macOS it also copies that link to the clipboard.
 
 No `.env` file is required. Every launch creates a fresh 32-byte pairing secret,
@@ -118,7 +118,7 @@ npm run relay
 npm run companion
 ```
 
-Use `ws://127.0.0.1:8787` in a locally served Story Cue Studio page. The public
+Use `ws://127.0.0.1:8787` in a locally served Audio Story Engine page. The public
 HTTPS website correctly requires a `wss://` address.
 
 ### Reach a manual companion from another network
@@ -140,8 +140,9 @@ restarted and are not a production deployment.
 
 ## Paid voice protection
 
-The one-click guest demo can receive `Build Immersive & Play`, but every exact
-build request must be approved separately on the REAPER Mac. The macOS dialog
+The one-click guest demo can receive `Create` and `Build Immersive & Play`, but
+every exact request that can generate voices must be approved separately on the
+REAPER Mac. The macOS dialog
 defaults to **Deny** and closes as denied after 45 seconds. Only clicking
 **Approve This Build** allows that one request to reach the safety journal and
 REAPER. Denial, timeout, a dialog error, or an unsupported platform all fail
@@ -155,8 +156,8 @@ receives only a shortened request ID, target runtime, and sanitized episode
 title—not the storyboard body, pairing secret, API key, or local paths. Approval
 is never reusable, and there is no approval prompt when the demo starts.
 
-In manual companion mode, remote `Build Immersive & Play` is refused unless the
-Mac's `.env` contains:
+In manual companion mode, remote `Create` and `Build Immersive & Play` are
+refused unless the Mac's `.env` contains:
 
 ```text
 ALLOW_PAID_VOICE_GENERATION=true

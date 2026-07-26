@@ -7,6 +7,10 @@ const JOURNAL_VERSION = 1;
 const MAX_COMPLETED_BUILD_DIGESTS = 200;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
+function usesPaidVoiceGeneration(action) {
+  return action === "create" || action === "build-play";
+}
+
 function timestamp(value) {
   return new Date(Number(value)).toISOString();
 }
@@ -231,14 +235,14 @@ export class FileJobJournal {
       }
       const identity = sanitizedIdentity(command);
       identity.scriptDigest = validateDigest(identity.scriptDigest);
-      if (identity.action === "build-play") {
+      if (usesPaidVoiceGeneration(identity.action)) {
         const duplicate = state.completedBuilds.some(
           (entry) => entry.scriptDigest === identity.scriptDigest,
         );
         const overrideArmed = Boolean(state.repeatBuildOverride);
         if (duplicate && !overrideArmed) {
           throw new DuplicatePaidBuildError(
-            "This exact storyboard already completed a paid Build Immersive & Play job. Arm a one-time local repeat override before generating it again.",
+            "This exact storyboard already completed a paid voice-generation job. Arm a one-time local repeat override before generating it again.",
           );
         }
         // A local override is one-shot and is consumed by the next build request,
@@ -271,7 +275,7 @@ export class FileJobJournal {
       }
       const completedAt = timestamp(this.now());
       state.lastCompleted = { ...identity, completedAt };
-      if (identity.action === "build-play") {
+      if (usesPaidVoiceGeneration(identity.action)) {
         state.completedBuilds = state.completedBuilds
           .filter((entry) => entry.scriptDigest !== identity.scriptDigest);
         state.completedBuilds.push({

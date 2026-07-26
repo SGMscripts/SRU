@@ -46,6 +46,28 @@ test("validates and sanitizes the allowlisted remote actions", () => {
   }, "sruthin-studio", now), /not allowed/i);
 });
 
+test("allows the one-click Create sequence only with a structured storyboard", () => {
+  const now = Date.now();
+  const command = validateCommandMessage({
+    type: "command",
+    version: 1,
+    requestId: "create-job-0001",
+    machineId: "sruthin-studio",
+    action: "create",
+    script: structuredStory,
+    runtimeMinutes: 3,
+    createdAt: now,
+    expiresAt: now + 60000,
+  }, "sruthin-studio", now);
+  assert.equal(command.action, "create");
+  assert.equal(command.script, structuredStory);
+  assert.throws(() => validateCommandMessage({
+    ...command,
+    requestId: "create-job-0002",
+    script: "",
+  }, "sruthin-studio", now), /Generate a storyboard/i);
+});
+
 test("allows only bounded numeric edit-cursor positions", () => {
   const now = Date.now();
   const command = validateCommandMessage({

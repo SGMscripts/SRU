@@ -5,6 +5,7 @@ export const MAX_SCRIPT_BYTES = 512 * 1024;
 export const MAX_SOCKET_PAYLOAD_BYTES = 600 * 1024;
 export const MAX_INVITE_ACCEPT_WINDOW_MS = 90 * 60 * 1000;
 export const ALLOWED_ACTIONS = new Set([
+  "create",
   "story-importer",
   "cue-recall",
   "elevenlabs",
@@ -119,7 +120,7 @@ export function validateCommandMessage(value, expectedMachineId, now = Date.now(
   if (Buffer.byteLength(script, "utf8") > MAX_SCRIPT_BYTES) {
     throw new Error("Storyboard exceeds the 512 KB remote limit.");
   }
-  if ((action === "story-importer" || action === "build-play") && !script.trim()) {
+  if ((action === "create" || action === "story-importer" || action === "build-play") && !script.trim()) {
     throw new Error("Generate a storyboard before importing it.");
   }
   if (

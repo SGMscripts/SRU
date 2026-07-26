@@ -23,6 +23,7 @@ test("uses one direct, deny-by-default osascript dialog with bounded timeouts", 
   const context = {
     title: "  EPISODE — THE LAST\nSIGNAL\u0000  ",
     runtimeMinutes: 7,
+    action: "create",
     requestId: "approval-request-0001",
     commandSha256: "a".repeat(64),
     scriptSha256: "b".repeat(64),
@@ -52,6 +53,7 @@ test("uses one direct, deny-by-default osascript dialog with bounded timeouts", 
   assert.equal(invocation.args[4], "EPISODE — THE LAST SIGNAL");
   assert.equal(invocation.args[5], "7 minutes");
   assert.ok("approval-request-0001".endsWith(invocation.args[6]));
+  assert.match(invocation.args[7], /Create/);
   assert.doesNotMatch(JSON.stringify(invocation.args), /SHOULD NEVER REACH OSASCRIPT/);
 
   assert.equal(APPLESCRIPT_APPROVAL_TIMEOUT_SECONDS, 45);
@@ -149,6 +151,7 @@ test("the inert approval source parses as AppleScript on macOS", {
         "Test Episode",
         "3 minutes",
         "request-0001",
+        "Build Immersive & Play",
       ],
       {
         encoding: "utf8",

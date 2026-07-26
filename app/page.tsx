@@ -261,6 +261,14 @@ const transportSeekAction: ReaperAction = {
   tone: "blue",
 };
 
+const createReaperAction: ReaperAction = {
+  id: "create",
+  label: "Create",
+  description: "Import Story, wait two seconds, Recall Cues, wait two seconds, then Generate All Voices.",
+  command: "",
+  tone: "purple",
+};
+
 const allReaperActions = [...reaperActions, transportPlayPauseAction, transportSeekAction];
 
 const reaperBaseUrls = [
@@ -911,7 +919,7 @@ function formatRemoteDuration(value: number | undefined) {
 }
 
 function remoteCompletionLimit(action: string) {
-  return action === "build-play" ? 35 * 60 * 1000 : 3 * 60 * 1000;
+  return action === "create" || action === "build-play" ? 35 * 60 * 1000 : 3 * 60 * 1000;
 }
 
 export default function Home() {
@@ -2017,14 +2025,18 @@ export default function Home() {
       setReaperStatus("Remote REAPER is not ready. Connect the relay and start the Mac companion with a dedicated story project open.");
       return;
     }
-    if (action.id === "build-play") {
+    if (action.id === "create" || action.id === "build-play") {
       const approved = window.confirm(
-        remoteInviteActiveRef.current
-          ? "Send this paid Build Immersive & Play request? The REAPER Mac owner must separately approve this exact request before ElevenLabs credits can be used."
-          : "Build Immersive & Play will use the ElevenLabs account stored on the REAPER computer. Continue with paid voice generation?",
+        action.id === "create"
+          ? remoteInviteActiveRef.current
+            ? "Send Create to the REAPER Mac? It will run Import Story, Recall Cues, and Generate All Voices. The Mac owner must separately approve this exact request before ElevenLabs credits can be used."
+            : "Create will run Import Story, Recall Cues, and Generate All Voices using the ElevenLabs account stored on the REAPER computer. Continue?"
+          : remoteInviteActiveRef.current
+            ? "Send this paid Build Immersive & Play request? The REAPER Mac owner must separately approve this exact request before ElevenLabs credits can be used."
+            : "Build Immersive & Play will use the ElevenLabs account stored on the REAPER computer. Continue with paid voice generation?",
       );
       if (!approved) {
-        setReaperStatus("Remote build cancelled before using ElevenLabs credits.");
+        setReaperStatus(`Remote ${action.id === "create" ? "Create" : "build"} cancelled before using ElevenLabs credits.`);
         return;
       }
     }
@@ -2057,7 +2069,7 @@ export default function Home() {
         requestId,
         machineId: remoteSettings.machineId,
         action: action.id,
-        script: action.id === "story-importer" || action.id === "build-play" ? output : "",
+        script: action.id === "create" || action.id === "story-importer" || action.id === "build-play" ? output : "",
         runtimeMinutes: settings.runtimeMinutes,
         cursorSeconds: Number.isFinite(cursorSeconds) ? Math.max(0, Number(cursorSeconds)) : undefined,
         timecode: action.id === "transport-seek" ? formatReaperTimecode(cursorSeconds || 0) : undefined,
@@ -2213,7 +2225,7 @@ export default function Home() {
       return;
     }
     if (reaperMode === "remote") {
-      setReaperStatus("Use the REAPER Wi-Fi bridge for the Create sequence. Remote mode keeps each action separately confirmed.");
+      sendRemoteReaperCommand(createReaperAction);
       return;
     }
     setRunningReaperAction("create");
@@ -2595,8 +2607,8 @@ export default function Home() {
                 <p>{remoteInviteMessage}</p>
                 <small>
                   A private invite is a replayable bearer link until it expires or the Mac launcher
-                  stops. Do not forward it. Every paid voice build requires separate approval for
-                  that exact request on the REAPER Mac.
+                  stops. Do not forward it. Every remote request that can generate voices requires
+                  separate approval for that exact request on the REAPER Mac.
                 </small>
               </div>
 
@@ -2606,7 +2618,7 @@ export default function Home() {
                     <span>ON THE REAPER MAC</span>
                     <strong>Create the private guest link</strong>
                     <p>
-                      Unzip the package, double-click <code>Start Remote REAPER Demo.command</code>,
+                      Unzip the package, double-click <code>Start Audio Story Engine Remote Demo.command</code>,
                       then send the complete link copied to the Mac clipboard.
                     </p>
                   </div>

@@ -53,10 +53,12 @@ export class ReaperWebControl {
     baseUrl = "http://127.0.0.1:8089",
     fetchImpl = globalThis.fetch,
     assetPath = "",
+    sleepImpl = sleep,
   } = {}) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.fetchImpl = fetchImpl;
     this.assetPath = assetPath;
+    this.sleep = sleepImpl;
   }
 
   async command(value, timeoutMs = 15000) {
@@ -176,7 +178,7 @@ export class ReaperWebControl {
 
   async runAction(action) {
     await this.command(action);
-    await sleep(250);
+    await this.sleep(250);
   }
 
   async setEditCursor(seconds) {
@@ -191,7 +193,7 @@ export class ReaperWebControl {
       const value = await this.getProject(key);
       if (value === "complete") return value;
       if (value.startsWith("failed:")) throw new Error(value.slice(7));
-      await sleep(1000);
+      await this.sleep(1000);
     }
     throw new Error(`${key} did not finish before the companion timeout.`);
   }
@@ -248,6 +250,31 @@ export class ReaperWebControl {
       error: state === "error" || state === "needs_attention",
       ...extras,
     });
+
+    if (command.action === "create") {
+      if (!allowPaidVoiceGeneration) {
+        throw new Error("Paid remote voice generation is locked on the Mac companion.");
+      }
+      await this.preflightCueAssets();
+      status("progress", "importing", "1/3 · Importing the structured storyboard into REAPER…");
+      await this.importStory(command.script, "create", command.runtimeMinutes, command.requestId, targetId);
+      await this.sleep(2000);
+      await this.assertTargetUnchanged(targetId);
+
+      status("progress", "cue-recall", "2/3 · Opening Cue Recall after the two-second handoff…");
+      await this.runAction(RECALL_ACTION);
+      await this.sleep(2000);
+      await this.assertTargetUnchanged(targetId);
+
+      status("progress", "voices", "3/3 · Starting Generate All Voices after the two-second handoff…");
+      await this.runAction(ELEVEN_ACTION);
+      status(
+        "complete",
+        "complete",
+        "Create sequence sent: Import Story → 2 seconds → Recall Cues → 2 seconds → Generate All Voices.",
+      );
+      return;
+    }
 
     if (command.action === "story-importer") {
       status("progress", "importing", "Sending the structured storyboard into REAPER…");
