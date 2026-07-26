@@ -131,6 +131,7 @@ type ExpansionBeat = {
 };
 
 const WORDS_PER_MINUTE = 145;
+const REAPER_TIMECODE_FPS = 25;
 const AI_STORAGE_KEY = "story-cue-studio-ai-settings-v1";
 const VOICE_STORAGE_KEY = "story-cue-studio-voice-settings-v1";
 const REMOTE_REAPER_STORAGE_KEY = "story-cue-studio-remote-reaper-v1";
@@ -364,6 +365,17 @@ function spokenWordCount(script: string) {
 function formatTimelineTime(seconds: number) {
   const rounded = Math.max(0, Math.round(Number(seconds) || 0));
   return `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, "0")}`;
+}
+
+function formatReaperTimecode(seconds: number) {
+  const frames = Math.max(0, Math.round((Number(seconds) || 0) * REAPER_TIMECODE_FPS));
+  const frame = frames % REAPER_TIMECODE_FPS;
+  const wholeSeconds = Math.floor(frames / REAPER_TIMECODE_FPS);
+  const second = wholeSeconds % 60;
+  const wholeMinutes = Math.floor(wholeSeconds / 60);
+  const minute = wholeMinutes % 60;
+  const hour = Math.floor(wholeMinutes / 60);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}:${String(frame).padStart(2, "0")}`;
 }
 
 function createStoryTimelineMarkers(script: string): StoryTimelineMarker[] {
@@ -2050,6 +2062,7 @@ export default function Home() {
         script: action.id === "story-importer" || action.id === "build-play" ? output : "",
         runtimeMinutes: settings.runtimeMinutes,
         cursorSeconds: Number.isFinite(cursorSeconds) ? Math.max(0, Number(cursorSeconds)) : undefined,
+        timecode: action.id === "transport-seek" ? formatReaperTimecode(cursorSeconds || 0) : undefined,
       }));
     } catch {
       cancelPendingRemoteCommand("The remote socket closed before the command could be sent. Reconnect and try again.");
@@ -2071,6 +2084,15 @@ export default function Home() {
       }
     }
 
+    if (action.id === "transport-seek" && (window.parent !== window || reaperMode !== "remote")) {
+      try {
+        await navigator.clipboard.writeText(formatReaperTimecode(cursorSeconds || 0));
+      } catch {
+        setReaperStatus("Clipboard access was blocked. Allow clipboard access so REAPER can read the HH:MM:SS:FF timecode.");
+        return;
+      }
+    }
+
     if (window.parent !== window) {
       setRunningReaperAction(action.id);
       setReaperStatus(`Sending “${action.label}” through the REAPER Wi‑Fi bridge…`);
@@ -2080,6 +2102,7 @@ export default function Home() {
         script: output,
         runtimeMinutes: settings.runtimeMinutes,
         cursorSeconds: Number.isFinite(cursorSeconds) ? Math.max(0, Number(cursorSeconds)) : undefined,
+        timecode: action.id === "transport-seek" ? formatReaperTimecode(cursorSeconds || 0) : undefined,
       }, "*");
       return;
     }
@@ -2431,7 +2454,7 @@ export default function Home() {
               >
                 {timelinePlaying ? "Ⅱ" : "▶"}
               </button>
-              <output className="story-time" aria-label="Edit cursor time">{formatTimelineTime(timelineCursorSeconds)} <span>/ {formatTimelineTime(timelineDurationSeconds)}</span></output>
+              <output className="story-time" aria-label="Edit cursor time">{formatReaperTimecode(timelineCursorSeconds)} <span>/ {formatReaperTimecode(timelineDurationSeconds)}</span></output>
               <div
                 className={`story-timeline ${timelineScrubbing ? "scrubbing" : ""}`}
                 role="slider"

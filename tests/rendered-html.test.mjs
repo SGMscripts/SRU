@@ -133,6 +133,9 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(page, /_dbab6e45e2cf4c988650dfad12851cc1/);
   assert.match(page, /transport-seek/);
   assert.match(page, /_RS905359b5cf6473ddef8a02e350cd4115c357ca1c/);
+  assert.match(page, /REAPER_TIMECODE_FPS = 25/);
+  assert.match(page, /function formatReaperTimecode/);
+  assert.match(page, /HH:MM:SS:FF timecode/);
   assert.match(page, /_RS9acc96ef9b416e2be08f75b70bc9d0143a5391e3/);
   assert.match(page, /Generate All Voices/);
   assert.match(page, /jumpToNextCue/);

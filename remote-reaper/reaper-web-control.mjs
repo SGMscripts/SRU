@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { copyTextToMacClipboard } from "./invite.mjs";
 
 export const IMPORT_ACTION = "_RS99a1bb9381b40ba9ade9d82fa74add533356b26c";
 export const RECALL_ACTION = "_RSb33e9ff14b29c13afa557ac9abaae96dd2fb3f79";
@@ -9,8 +10,20 @@ export const PROJECT_SECTION = "StoryCueStudio";
 export const STORY_TARGET_ROLE = "story_target";
 export const CHUNK_SIZE = 1800;
 export const MAX_CHUNKS = 1000;
+export const TIMECODE_FPS = 25;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+export function formatReaperTimecode(seconds) {
+  const frames = Math.max(0, Math.round((Number(seconds) || 0) * TIMECODE_FPS));
+  const frame = frames % TIMECODE_FPS;
+  const wholeSeconds = Math.floor(frames / TIMECODE_FPS);
+  const second = wholeSeconds % 60;
+  const wholeMinutes = Math.floor(wholeSeconds / 60);
+  const minute = wholeMinutes % 60;
+  const hour = Math.floor(wholeMinutes / 60);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}:${String(frame).padStart(2, "0")}`;
+}
 
 function segment(value) {
   return encodeURIComponent(String(value));
@@ -261,7 +274,9 @@ export class ReaperWebControl {
 
     if (command.action === "transport-seek") {
       await this.assertTargetUnchanged(targetId);
-      const position = await this.setEditCursor(command.cursorSeconds);
+      const position = Math.max(0, Math.min(86400, Number(command.cursorSeconds) || 0));
+      const copied = await copyTextToMacClipboard(formatReaperTimecode(position));
+      if (!copied) throw new Error("Could not copy the HH:MM:SS:FF timecode to the REAPER Mac clipboard.");
       await this.runAction(SEEK_ACTION);
       status("complete", "cursor", `REAPER edit cursor moved to ${Math.floor(position / 60)}:${String(Math.round(position) % 60).padStart(2, "0")}.`);
       return;

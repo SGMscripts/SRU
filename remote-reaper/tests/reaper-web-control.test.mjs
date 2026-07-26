@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   encodeStoryChunks,
+  formatReaperTimecode,
   ReaperWebControl,
 } from "../reaper-web-control.mjs";
 
@@ -54,15 +55,8 @@ test("readiness protects unmarked or playing REAPER projects", async () => {
   assert.match((await reaper.readiness()).message, /dedicated story project/i);
 });
 
-test("moves the edit cursor with the Web Control SET/POS command", async () => {
-  const calls = [];
-  const reaper = new ReaperWebControl({
-    fetchImpl: async (url) => {
-      calls.push(decodeURIComponent(String(url)));
-      return new Response("", { status: 200 });
-    },
-  });
-  const position = await reaper.setEditCursor(42.1256);
-  assert.equal(position, 42.1256);
-  assert.match(calls[0], /SET\/POS\/42\.126;/);
+test("formats seek clipboard values as 25 fps HH:MM:SS:FF timecode", () => {
+  assert.equal(formatReaperTimecode(0), "00:00:00:00");
+  assert.equal(formatReaperTimecode(42.1256), "00:00:42:03");
+  assert.equal(formatReaperTimecode(3661.96), "01:01:01:24");
 });
