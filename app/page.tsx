@@ -2208,7 +2208,7 @@ export default function Home() {
           <small>{activeProviderConfig.apiKey ? providerLabels[aiSettings.provider] : "Local"}</small>
         </button>
       </div>
-      <h1>Audio Story Studio</h1>
+      <h1>Audio Story Engine</h1>
       <p className="subhead">Turn a plain story into either a fast three-minute demo or the complete seven-minute storyboard, with full-cast narration, acting direction, ambience, music, and clean sound cues.</p>
       <div className="promise"><span>01</span> 3 or 7+ minutes <span>02</span> Original storyboard retained <span>03</span> Full character voices <span>04</span> Maximum two SFX per gap</div>
     </section>

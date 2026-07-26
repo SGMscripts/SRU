@@ -83,13 +83,13 @@ function inviteFragment(payload) {
   return `#reaper-invite=${Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")}`;
 }
 
-test("server-renders the Audio Story Studio demo controls", async () => {
+test("server-renders the Audio Story Engine demo controls", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>Audio Story Studio<\/title>/i);
+  assert.match(html, /<title>Audio Story Engine<\/title>/i);
   assert.match(html, /3-minute demo/);
   assert.match(html, /7\+ minute storyboard/);
   assert.match(html, /Generate 3-minute demo/);
@@ -227,7 +227,7 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(route, /reasoning_effort:\s*"medium"/);
   assert.match(route, /gsk_\[A-Za-z0-9_-\]/);
 
-  assert.match(layout, /(?:title:\s*|const title\s*=\s*)"Audio Story Studio"/);
+  assert.match(layout, /(?:title:\s*|const title\s*=\s*)"Audio Story Engine"/);
   assert.match(layout, /REAPER-ready (?:immersive )?audio drama/);
 });
 

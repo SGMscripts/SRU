@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const title = "Audio Story Studio";
+const title = "Audio Story Engine";
 const description = "Turn a normal story into a REAPER-ready immersive audio drama.";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -49,7 +49,7 @@ export async function generateMetadata(): Promise<Metadata> {
         url: socialImage,
         width: 1200,
         height: 630,
-        alt: "Audio Story Studio turns written stories into layered voice, SFX, ambient, and music timelines.",
+        alt: "Audio Story Engine turns written stories into layered voice, SFX, ambient, and music timelines.",
       }],
     },
     twitter: {
