@@ -166,7 +166,7 @@ ${trainingCueBank ? `\n${trainingCueBankInstructions()}` : ""}`;
   if (!optimizedCount) throw new Error("The model did not return usable optimized cues.");
   const optimizedScript = lines.join("\n");
   if (!trainingCueBank) return { script: optimizedScript, optimizedCount };
-  const constrained = enforceTrainingCueBank(optimizedScript);
+  const constrained = enforceTrainingCueBank(optimizedScript, 0);
   return { script: constrained.script, optimizedCount, cueBank: constrained.report };
 }
 
@@ -503,7 +503,10 @@ export async function POST(request: Request) {
     if (body.action === "optimize_cues") {
       const script = String(body.script || "").trim();
       if (!script) return NextResponse.json({ mode: "error", error: "Generate a cue script first." }, { status: 400 });
-      const optimized = await optimizeCueScript(ai, script, trainingCueBank);
+      // Optimize is deliberately stricter than generation: it is a recall-ready
+      // pass for the ai mastering training.RPP session, never a source of new
+      // SFX or Ambient vocabulary.
+      const optimized = await optimizeCueScript(ai, script, true);
       return NextResponse.json({ mode: "ai", provider, model: ai.model, ...optimized });
     }
     if (body.action === "ambient_ranges") {

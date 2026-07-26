@@ -120,7 +120,7 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(page, /runtimeMinutes:\s*3/);
   assert.match(page, /runtimeMinutes:\s*settings\.runtimeMinutes/);
   assert.match(page, /chooseRuntime\(7\)/);
-  assert.match(page, /enforceTrainingCueBank\(locallyOptimized\)/);
+  assert.match(page, /enforceTrainingCueBank\(locallyOptimized, 0\)/);
   assert.match(page, /enforceTrainingCueBank\(locallyRanged\)/);
   assert.match(page, /function prepareGeneratedCueScript\(script: string, settings: Settings\)/);
   assert.match(page, /if \(settings\.optimizeCues\) prepared = optimizeCueScriptLocally\(prepared\)/);
@@ -216,6 +216,7 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(route, /runtimeWordIssue\(words, profile\.minutes\)/);
   assert.match(route, /trainingCueBankInstructions\(\)/);
   assert.match(route, /enforceTrainingCueBank\(script\)/);
+  assert.match(route, /optimizeCueScript\(ai, script, true\)/);
   assert.match(route, /cueBank/);
   assert.match(route, /settings\.yourName/);
   assert.match(route, /type Provider = "openai" \| "gemini" \| "groq" \| "compatible"/);

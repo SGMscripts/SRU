@@ -1899,15 +1899,13 @@ export default function Home() {
       return;
     }
     setOptimizing(true);
-    setStatus(`Optimizing SFX, Ambient, and Music cue data with ${activeProviderConfig.apiKey ? providerLabels[aiSettings.provider] : "the local optimizer"}…`);
+    setStatus(`Optimizing with the ai mastering training cue bank: SFX and Ambient stay inside the REAPER session vocabulary…`);
     const locallyOptimized = optimizeCueScriptLocally(output);
-    const localPolicy = settings.trainingCueBank
-      ? enforceTrainingCueBank(locallyOptimized)
-      : { script: locallyOptimized, report: undefined };
+    const localPolicy = enforceTrainingCueBank(locallyOptimized, 0);
     const localVersion = localPolicy.script;
     if (!activeProviderConfig.apiKey.trim()) {
       setOutput(localVersion);
-      setStatus(`Cue data optimized locally: short SFX search terms, location-based ambience, and searchable music briefs.${cueBankStatus(localPolicy.report)}`);
+      setStatus(`Cue data optimized locally against ai mastering training.RPP: every SFX and Ambient cue is from the REAPER session bank; Music stays on MUSIC POD.${cueBankStatus(localPolicy.report)}`);
       setOptimizing(false);
       return;
     }
