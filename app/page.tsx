@@ -226,7 +226,7 @@ const reaperActions: ReaperAction[] = [
     id: "cue-recall",
     label: "Recall Cues",
     description: "Open Cue Recall for the imported SFX, ambience, and music cue items.",
-    command: "_RSb33e9ff14b29c13afa557ac9abaae96dd2fb3f79",
+    command: "_RS419e01a1897fa99332fb4b216371f2f2cd868122",
     tone: "orange",
   },
   {

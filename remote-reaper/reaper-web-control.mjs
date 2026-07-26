@@ -2,7 +2,7 @@ import { access } from "node:fs/promises";
 import { copyTextToMacClipboard } from "./invite.mjs";
 
 export const IMPORT_ACTION = "_RS99a1bb9381b40ba9ade9d82fa74add533356b26c";
-export const RECALL_ACTION = "_RSb33e9ff14b29c13afa557ac9abaae96dd2fb3f79";
+export const RECALL_ACTION = "_RS419e01a1897fa99332fb4b216371f2f2cd868122";
 export const ELEVEN_ACTION = "_RS9acc96ef9b416e2be08f75b70bc9d0143a5391e3";
 export const PLAY_PAUSE_ACTION = "_dbab6e45e2cf4c988650dfad12851cc1";
 export const SEEK_ACTION = "_RS905359b5cf6473ddef8a02e350cd4115c357ca1c";
