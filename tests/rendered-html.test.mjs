@@ -130,6 +130,8 @@ test("wires runtime selection and the same strict cue-bank policy into local and
   assert.match(page, /const prepared = prepareGeneratedCueScript\(data\.script, settings\)/);
   assert.match(page, /Cue prep:/);
   assert.match(page, /transport-play-pause/);
+  assert.match(page, /function createReaperAudio/);
+  assert.match(page, /Import Story → wait 2 sec → Recall Cues → wait 2 sec → Generate All Voices/);
   assert.match(page, /_dbab6e45e2cf4c988650dfad12851cc1/);
   assert.match(page, /transport-seek/);
   assert.match(page, /_RS905359b5cf6473ddef8a02e350cd4115c357ca1c/);

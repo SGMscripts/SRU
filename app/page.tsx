@@ -2196,6 +2196,51 @@ export default function Home() {
     void sendReaperCommand(transportPlayPauseAction);
   }
 
+  async function createReaperAudio() {
+    if (!output.trim()) {
+      setStatus("Generate a storyboard before creating the REAPER audio sequence.");
+      return;
+    }
+    if (window.parent !== window) {
+      setRunningReaperAction("create");
+      setReaperStatus("Creating the REAPER audio sequence: Import Story, Recall Cues, then Generate All Voices…");
+      window.parent.postMessage({
+        type: "story-cue-studio:reaper",
+        action: "create",
+        script: output,
+        runtimeMinutes: settings.runtimeMinutes,
+      }, "*");
+      return;
+    }
+    if (reaperMode === "remote") {
+      setReaperStatus("Use the REAPER Wi-Fi bridge for the Create sequence. Remote mode keeps each action separately confirmed.");
+      return;
+    }
+    setRunningReaperAction("create");
+    try {
+      await navigator.clipboard.writeText(output);
+      const sequence = reaperActions.slice(0, 3);
+      for (let index = 0; index < sequence.length; index += 1) {
+        const action = sequence[index];
+        setReaperStatus(`${index + 1}/3: ${action.label}…`);
+        for (const baseUrl of reaperBaseUrls) {
+          try {
+            await fetch(`${baseUrl}/_/${encodeURIComponent(action.command)};`, { method: "GET", mode: "no-cors", cache: "no-store" });
+            break;
+          } catch {
+            // Try the other configured REAPER Web Control port.
+          }
+        }
+        if (index < sequence.length - 1) await new Promise((resolve) => window.setTimeout(resolve, 2000));
+      }
+      setReaperStatus("Create sequence sent: Import Story → Recall Cues → Generate All Voices.");
+    } catch {
+      setReaperStatus("Create could not start. Allow clipboard access and confirm REAPER Web Control is enabled.");
+    } finally {
+      setRunningReaperAction(null);
+    }
+  }
+
   const storyTransport = output ? <section className="story-transport" aria-label="REAPER story timeline">
     <div className="story-transport-head">
       <div><span>REAPER-READY AUDIO PLAYBACK</span><strong>Story edit cursor</strong></div>
@@ -2247,6 +2292,9 @@ export default function Home() {
         <textarea aria-label="Normal story" value={story} onChange={(event) => setStory(event.target.value)} placeholder="Paste your story here…" />
         <p className="hint">Paste prose, a chapter, or a scene. Short material will be expanded into a complete dramatic arc.</p>
         {storyTransport}
+        <button className="create-audio" onClick={() => void createReaperAudio()} disabled={!output.trim() || runningReaperAction !== null}>
+          <span>Create</span><small>Import Story → wait 2 sec → Recall Cues → wait 2 sec → Generate All Voices</small>
+        </button>
       </div>
 
       <div className="panel director-panel">
