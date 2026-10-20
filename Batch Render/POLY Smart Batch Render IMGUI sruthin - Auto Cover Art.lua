@@ -1,5 +1,5 @@
--- @description POLY Smart Batch Render + Auto Cover Art IMGUI sruthin
--- @version 2.1
+-- @description POLY Smart Batch Render + Auto Cover Art IMGUI sruthin (Queue)
+-- @version 3.3
 -- @author Sruthin + Codex
 -- @about
 --   ReaImGui front-end for folder-based POLY smart batch renders with
@@ -20,7 +20,38 @@
 --     - Update next META marker RecType/Microphone/ixmlTrackLayout/ChannelLayout from active folder child tracks
 --     - Post-write ixmlTrackLayout/ChannelLayout directly into rendered WAV/BWF files using bwfmetaedit
 --
+--   Stopping a run:
+--     While REAPER's render window is up it owns the screen, so the script's STOP
+--     button cannot be clicked. Cancel REAPER's render window instead (its Cancel
+--     button, or Esc). REAPER cancels only that one file, so the script measures
+--     the file it just wrote: a short or missing file means the render was
+--     cancelled, and every remaining selected item and queue job is cancelled
+--     too. STOP works between files. Files already finished are always kept.
+--
+--   Render queue (bottom of the Render page):
+--     Select items on a POLY parent track, press "Add Selection as One Job"
+--     (or "Add Each Item as a Job"), point that job at any folder on your system,
+--     repeat for other selections/parents, then press "Run Queue" to render
+--     every job in order. The queue is stored with the project.
+--
 -- @changelog
+--   v3.3
+--   - Cancelling one render in REAPER now cancels every remaining selected item and queue job
+--   - Detection is by measuring the file REAPER just wrote: a cancelled render leaves a short
+--     (or missing) file, which the previous "was a file written" check could not see
+--   v3.2
+--   - The render queue now lives on the Render page instead of its own tab
+--   - Cancelling REAPER's own render window stops the whole batch (no output file written)
+--   v3.1
+--   - STOP button on the Render tab and a red STOP Queue button on the Queue tab
+--   - Press Esc while a file is rendering to stop the whole batch (needs js_ReaScriptAPI)
+--   - A stopped run still restores render settings, routing and metadata, and keeps finished files
+--   v3.0 (Queue edition)
+--   - New Render Queue tab: stack several selections as jobs and render them back to back
+--   - Per-job output folder (Browse... or typed path) plus optional per-job filename pattern
+--   - Add the current selection as one job, or as one job per selected item
+--   - Queue is saved with the project, so it survives closing the script or REAPER
+--   - Optional custom output folder for one-off renders on the Render tab
 --   v2.1
 --   - Hide advanced ChannelLayout/URL metadata toggles and keep those writes enabled by default
 
@@ -35,8 +66,9 @@ if not r.ImGui_CreateContext then
   return
 end
 
-local SCRIPT_TITLE = "POLY Smart Batch Render + Auto Cover Art IMGUI sruthin"
+local SCRIPT_TITLE = "POLY Smart Batch Render + Auto Cover Art IMGUI sruthin - Queue"
 local EXT_SECTION = "PolySmartBatchRenderImGuiAutoCoverArt"
+local QUEUE_PROJ_KEY = "render_queue"
 local RENDER_ACTION_ID = 42230
 local RENDER_SOURCE_MASK = 1 | 2 | 32 | 64 | 128 | 4096
 local RENDER_SOURCE_SELECTED_ITEMS_VIA_MASTER = 64
@@ -206,6 +238,10 @@ local IMAGE_EXTENSIONS = {
   webp = true,
 }
 
+-- Namespace table for the queue edition's helpers. Keeping them on one table
+-- avoids blowing Lua's 200 locals-per-chunk limit in this (large) main chunk.
+local Q = {}
+
 local ctx = r.ImGui_CreateContext(SCRIPT_TITLE)
 local FLT_MIN = 0.0
 if r.ImGui_NumericLimits_Float then
@@ -238,6 +274,29 @@ local state = {
   status_line = "Ready.",
   last_summary = "",
   selection_info = nil,
+  use_output_dir = false,
+  output_dir = "",
+  queue_default_dir = "",
+  queue_stop_on_error = false,
+  queue_skip_missing = true,
+  stop_on_escape = true,
+  stop_on_render_cancel = true,
+  queue = {},
+  queue_next_id = 1,
+  queue_status = "",
+  queue_item_map = nil,
+  queue_item_map_time = 0,
+  queue_run = {
+    active = false,
+    phase = "idle",
+    index = 0,
+    total = 0,
+    done = 0,
+    failed = 0,
+    skipped = 0,
+    stopped = false,
+    results = {},
+  },
 }
 
 local function get_ext_bool(key, default)
@@ -287,6 +346,13 @@ state.inject_ucs_metadata = get_ext_bool("inject_ucs_metadata", true)
 state.update_meta_marker = get_ext_bool("update_meta_marker", false)
 state.post_write_ixml_layout = get_ext_bool("post_write_ixml_layout", true)
 state.post_patch_channel_mask = get_ext_bool("post_patch_channel_mask", true)
+state.use_output_dir = get_ext_bool("use_output_dir", false)
+state.output_dir = get_ext_text("output_dir", "")
+state.queue_default_dir = get_ext_text("queue_default_dir", "")
+state.queue_stop_on_error = get_ext_bool("queue_stop_on_error", false)
+state.stop_on_escape = get_ext_bool("stop_on_escape", true)
+state.stop_on_render_cancel = get_ext_bool("stop_on_render_cancel", true)
+state.queue_skip_missing = get_ext_bool("queue_skip_missing", true)
 state.force_channel_layout_render_metadata = true
 set_ext_bool("force_channel_layout_render_metadata", true)
 state.mirror_channel_layout_to_description = false
@@ -492,6 +558,12 @@ local BUTTON_PRESETS = {
     { "Button",        0.22, 0.58, 0.92 },
     { "ButtonHovered", 0.36, 0.74, 1.00 },
     { "ButtonActive",  0.55, 0.88, 1.00 },
+    { "Text",          1.00, 1.00, 1.00 },
+  },
+  danger = {
+    { "Button",        0.84, 0.20, 0.26 },
+    { "ButtonHovered", 0.95, 0.32, 0.38 },
+    { "ButtonActive",  1.00, 0.46, 0.52 },
     { "Text",          1.00, 1.00, 1.00 },
   },
   amber = {
@@ -706,6 +778,154 @@ local function get_item_label(item)
   local pos = r.GetMediaItemInfo_Value(item, "D_POSITION")
   local len = r.GetMediaItemInfo_Value(item, "D_LENGTH")
   return string.format("%s to %s", format_seconds(pos), format_seconds(pos + len))
+end
+
+function Q.set_next_item_width(width)
+  if r.ImGui_SetNextItemWidth then
+    pcall(r.ImGui_SetNextItemWidth, ctx, width)
+  end
+end
+
+function Q.sanitize_line(value)
+  local out = tostring(value or ""):gsub("[\r\n]+", " ")
+  return out
+end
+
+function Q.expand_user_path(path)
+  local p = tostring(path or "")
+  if p:sub(1, 1) == "~" then
+    local home = os.getenv("HOME") or ""
+    if home ~= "" then
+      p = home .. p:sub(2)
+    end
+  end
+  return p
+end
+
+function Q.normalize_dir_path(path)
+  local p = trim(Q.expand_user_path(path))
+  if p == "" then return "" end
+  p = p:gsub("[/\\]+$", "")
+  if p == "" then return "/" end
+  return p
+end
+
+function Q.shorten_path(path, max_len)
+  local p = tostring(path or "")
+  max_len = max_len or 58
+  if #p <= max_len then return p end
+  return "..." .. p:sub(#p - max_len + 4)
+end
+
+function Q.directory_exists(path)
+  if trim(path) == "" then return false end
+  if r.EnumerateFiles and r.EnumerateFiles(path, 0) ~= nil then return true end
+  if r.EnumerateSubdirectories and r.EnumerateSubdirectories(path, 0) ~= nil then return true end
+  local probe = path .. "/.poly_batch_render_probe"
+  local f = io.open(probe, "wb")
+  if f then
+    f:close()
+    os.remove(probe)
+    return true
+  end
+  return false
+end
+
+function Q.ensure_directory(path)
+  local dir = Q.normalize_dir_path(path)
+  if dir == "" then
+    return false, "no folder set"
+  end
+  if Q.directory_exists(dir) then
+    return true
+  end
+  if r.RecursiveCreateDirectory then
+    r.RecursiveCreateDirectory(dir, 0)
+  end
+  if Q.directory_exists(dir) then
+    return true
+  end
+  return false, "folder could not be created or is not writable"
+end
+
+-- Stop/cancel support.
+--
+-- A render started with Main_OnCommand() blocks REAPER's main thread, so no
+-- ImGui frame can run while a single file is being written. Two things can
+-- therefore raise the stop flag:
+--   * the Stop button (works between items when frames do run, and between
+--     queue jobs), and
+--   * the Escape key, polled through js_ReaScriptAPI between items. Escape
+--     also aborts REAPER's own render of the file currently being written,
+--     so one press stops both the current file and the rest of the batch.
+-- The batch always stops at an item boundary, with all render settings,
+-- track routing and metadata restored exactly as after a normal run.
+Q.cancel = {
+  requested = false,
+  reason = "",
+  last_poll = 0,
+}
+
+function Q.clear_cancel()
+  Q.cancel.requested = false
+  Q.cancel.reason = ""
+  Q.cancel.last_poll = r.time_precise and r.time_precise() or 0
+end
+
+function Q.request_cancel(reason)
+  Q.cancel.requested = true
+  Q.cancel.reason = reason or "Stop requested"
+  return true
+end
+
+function Q.escape_available()
+  return r.JS_VKeys_GetState ~= nil
+end
+
+-- Returns true once a stop has been requested. Polls Escape over exactly the
+-- window since the previous poll, so a press from before the batch started
+-- (for example one that closed another dialog) can never cancel this run.
+function Q.poll_cancel()
+  if Q.cancel.requested then return true end
+  if not state.stop_on_escape then return false end
+  if not r.JS_VKeys_GetState then return false end
+
+  local now = r.time_precise and r.time_precise() or 0
+  local last = Q.cancel.last_poll
+  if not last or last <= 0 then last = now end
+  local since = now - last
+  Q.cancel.last_poll = now
+  if since < 0.05 then since = 0.05 end
+  if since > 30.0 then since = 30.0 end
+
+  local ok, keys = pcall(r.JS_VKeys_GetState, -since)
+  if ok and type(keys) == "string" and #keys >= 27 and keys:byte(27) == 1 then
+    Q.request_cancel("Escape pressed")
+    return true
+  end
+  return false
+end
+
+function Q.browse_for_folder(caption, initial)
+  local start_dir = Q.normalize_dir_path(initial)
+  if r.JS_Dialog_BrowseForFolder then
+    local ok, picked = r.JS_Dialog_BrowseForFolder(caption or "Choose a folder", start_dir)
+    if ok and ok ~= 0 and trim(picked or "") ~= "" then
+      return Q.normalize_dir_path(picked)
+    end
+    return nil
+  end
+
+  local ok, csv = r.GetUserInputs(
+    caption or "Choose a folder",
+    1,
+    "Folder path:,extrawidth=460",
+    start_dir
+  )
+  if ok and trim(csv or "") ~= "" then
+    return Q.normalize_dir_path(csv)
+  end
+  return nil
 end
 
 local function get_file_extension(path)
@@ -932,19 +1152,21 @@ local function restore_selected_items(items)
   end
 end
 
-local function collect_selected_items()
-  local count = r.CountSelectedMediaItems(0)
-  if count == 0 then
-    return nil, "Select items on the POLY parent/folder track (image items for cover art, or empty items for no image metadata)."
+function Q.gather_items(source_items)
+  if not source_items or #source_items == 0 then
+    return nil, "No media items were supplied for this render."
   end
 
   local items = {}
   local parent = nil
   local image_count = 0
 
-  for i = 0, count - 1 do
-    local item = r.GetSelectedMediaItem(0, i)
-    local track = item and r.GetMediaItemTrack(item) or nil
+  for _, item in ipairs(source_items) do
+    if not (item and r.ValidatePtr2(0, item, "MediaItem*")) then
+      return nil, "One or more items are no longer present in this project."
+    end
+
+    local track = r.GetMediaItemTrack(item)
     if not parent then
       parent = track
     elseif track ~= parent then
@@ -959,6 +1181,7 @@ local function collect_selected_items()
     items[#items + 1] = item
   end
 
+  local count = #items
   return {
     items = items,
     parent = parent,
@@ -966,6 +1189,20 @@ local function collect_selected_items()
     non_image_count = count - image_count,
     total_count = count,
   }
+end
+
+local function collect_selected_items()
+  local count = r.CountSelectedMediaItems(0)
+  if count == 0 then
+    return nil, "Select items on the POLY parent/folder track (image items for cover art, or empty items for no image metadata)."
+  end
+
+  local items = {}
+  for i = 0, count - 1 do
+    items[#items + 1] = r.GetSelectedMediaItem(0, i)
+  end
+
+  return Q.gather_items(items)
 end
 
 local function collect_child_tracks(parent)
@@ -1016,6 +1253,7 @@ local function snapshot_render_state(parent)
     render_addtoproj = r.GetSetProjectInfo(0, "RENDER_ADDTOPROJ", 0, false),
     render_srate = r.GetSetProjectInfo(0, "RENDER_SRATE", 0, false),
     render_srate_use = r.GetSetProjectInfo(0, "RENDER_SRATE_USE", 0, false),
+    render_file = get_project_render_string("RENDER_FILE"),
     parent_channels = parent and r.GetMediaTrackInfo_Value(parent, "I_NCHAN") or nil,
   }
 end
@@ -1030,6 +1268,9 @@ local function restore_render_state(parent, snap)
   r.GetSetProjectInfo(0, "RENDER_ADDTOPROJ", snap.render_addtoproj or 0, true)
   r.GetSetProjectInfo(0, "RENDER_SRATE", snap.render_srate or 0, true)
   r.GetSetProjectInfo(0, "RENDER_SRATE_USE", snap.render_srate_use or 0, true)
+  if snap.render_file ~= nil then
+    set_project_render_string("RENDER_FILE", snap.render_file)
+  end
   if parent and snap.parent_channels then
     r.SetMediaTrackInfo_Value(parent, "I_NCHAN", snap.parent_channels)
   end
@@ -1055,6 +1296,10 @@ local function sort_items_by_position(items)
     return a_pos < b_pos
   end)
 end
+
+Q.render_override = {
+  pattern = nil,
+}
 
 local function apply_render_prefs(parent, dst_channels, disable_tail, snap, render_sample_rate)
   local render_settings = math.floor((snap and snap.render_settings) or 0)
@@ -1089,7 +1334,7 @@ local function apply_render_prefs(parent, dst_channels, disable_tail, snap, rend
   ensure_track_channels(parent, dst_channels)
 
   if state.enforce_render_filename_pattern then
-    local pattern = trim(state.render_filename_pattern)
+    local pattern = trim(Q.render_override.pattern or state.render_filename_pattern)
     if pattern ~= "" then
       set_project_render_string("RENDER_PATTERN", pattern)
     end
@@ -1868,6 +2113,88 @@ local function parse_wave_fmt_info(data)
   return nil, "fmt chunk not found"
 end
 
+-- How many seconds of audio a rendered RIFF/WAVE file really holds.
+--
+-- The size in the header cannot be trusted on a cancelled render (REAPER may
+-- leave a placeholder, or patch in a short one), so the data chunk is clamped
+-- to what is actually on disk. A render that was cancelled part way therefore
+-- reports its true, short duration.
+function Q.wave_audio_seconds(path)
+  local f = io.open(path, "rb")
+  if not f then return nil, "missing" end
+
+  local file_size = f:seek("end")
+  f:seek("set", 0)
+  local head = f:read(524288) or ""
+  f:close()
+
+  local info = parse_wave_fmt_info(head)
+  if not info or not info.byte_rate or info.byte_rate <= 0 then
+    return nil, "unreadable"
+  end
+
+  local pos = 13
+  while pos + 7 <= #head do
+    local chunk_id = head:sub(pos, pos + 3)
+    local chunk_size = read_u32_le(head, pos + 4)
+    if not chunk_size then break end
+
+    if chunk_id == "data" then
+      local data_start = pos + 7
+      local on_disk = file_size - data_start
+      if on_disk < 0 then on_disk = 0 end
+      local usable = chunk_size
+      if usable > on_disk then usable = on_disk end
+      return usable / info.byte_rate
+    end
+
+    local advance = 8 + chunk_size + (chunk_size % 2)
+    if advance <= 0 then break end
+    pos = pos + advance
+  end
+
+  return nil, "no data chunk"
+end
+
+-- Decides whether the render that just ran was interrupted.
+--
+-- Returns interrupted (boolean), reason (string) and checked (boolean).
+-- checked is false when nothing could be judged, which never stops a batch.
+function Q.render_was_interrupted(targets, expected_seconds)
+  if not targets or #targets == 0 then
+    return false, "REAPER reported no render target files", false
+  end
+
+  local checked = false
+
+  for _, path in ipairs(targets) do
+    local f = io.open(path, "rb")
+    if not f then
+      return true, string.format("no output file was written (%s)", path), true
+    end
+    f:close()
+
+    if is_riff_wave_path(path) and expected_seconds and expected_seconds > 0.5 then
+      local seconds = Q.wave_audio_seconds(path)
+      if seconds then
+        checked = true
+        if seconds < (expected_seconds - 0.25) then
+          return true, string.format(
+            "output file holds %.2f s of the expected %.2f s",
+            seconds,
+            expected_seconds
+          ), true
+        end
+      end
+    end
+  end
+
+  if not checked then
+    return false, "output files could not be measured", false
+  end
+  return false, nil, true
+end
+
 local function subtype_guid_for_format_tag(format_tag)
   local subtype_tag = (format_tag == 3) and 3 or 1
   return write_u32_le(subtype_tag) ..
@@ -2600,8 +2927,13 @@ local function set_status(msg)
   state.status_line = msg or ""
 end
 
-local function run_batch_render()
-  local gathered, err = collect_selected_items()
+local function run_batch_render(job)
+  local gathered, err
+  if job and job.items then
+    gathered, err = Q.gather_items(job.items)
+  else
+    gathered, err = collect_selected_items()
+  end
   if not gathered then
     return false, err
   end
@@ -2665,6 +2997,8 @@ local function run_batch_render()
   local sample_rate_mixed = 0
   local sample_rate_warnings = {}
   local sample_rate_values = {}
+  local cancel_detect_reason = ""
+  local cancel_detect_note = ""
   local profile_applied = false
   local profile_mode_name = render_profile_mode_label(state.render_profile_mode)
   local forced_filename_pattern = trim(state.render_filename_pattern)
@@ -2673,6 +3007,22 @@ local function run_batch_render()
     state.render_filename_pattern = forced_filename_pattern
     set_ext_text("render_filename_pattern", forced_filename_pattern)
   end
+
+  local job_pattern = (job and trim(job.pattern or "")) or ""
+  if job_pattern ~= "" then
+    forced_filename_pattern = job_pattern
+    Q.render_override.pattern = job_pattern
+  else
+    Q.render_override.pattern = nil
+  end
+
+  local output_dir = ""
+  if job and trim(job.output_dir or "") ~= "" then
+    output_dir = Q.normalize_dir_path(job.output_dir)
+  elseif state.use_output_dir then
+    output_dir = Q.normalize_dir_path(state.output_dir)
+  end
+  local output_dir_applied = false
   local ucs_applied = 0
   local ucs_skipped = 0
   local mode_name = (state.render_mode == RENDER_MODE_STEREO) and "Stereo mix (child tracks)" or "POLY WAV (multichannel)"
@@ -2710,6 +3060,21 @@ local function run_batch_render()
     render_apply_snap = snapshot_render_state(parent)
   end
 
+  if output_dir ~= "" then
+    local dir_ok, dir_err = Q.ensure_directory(output_dir)
+    if dir_ok then
+      set_project_render_string("RENDER_FILE", output_dir)
+      output_dir_applied = true
+      render_apply_snap = snapshot_render_state(parent)
+    else
+      warning_lines[#warning_lines + 1] = string.format(
+        "Output folder could not be prepared (%s): %s. The project render path was used instead.",
+        tostring(dir_err or "unknown error"),
+        output_dir
+      )
+    end
+  end
+
   if state.inject_ucs_metadata then
     ucs_applied, ucs_skipped = inject_ucs_render_metadata({
       direct_values = UCS_DIRECT_VALUES,
@@ -2717,8 +3082,15 @@ local function run_batch_render()
     })
   end
 
+  local cancelled = false
+
   local ok, result_or_err = xpcall(function()
     for _, poly_item in ipairs(items) do
+      if Q.poll_cancel() then
+        cancelled = true
+        break
+      end
+
       local image_path = get_item_image_path(poly_item)
       clear_sends(parent)
 
@@ -2884,9 +3256,23 @@ local function run_batch_render()
         r.SetMediaItemSelected(poly_item, true)
         r.Main_OnCommand(RENDER_ACTION_ID, 0)
 
-        local render_targets = nil
-        if child_meta and (state.post_write_ixml_layout or state.post_patch_channel_mask) then
-          render_targets = get_render_targets()
+        local render_targets = get_render_targets()
+
+        if state.stop_on_render_cancel then
+          local interrupted, reason, checked = Q.render_was_interrupted(render_targets, endt - pos)
+          if interrupted then
+            Q.request_cancel("render cancelled in REAPER")
+            cancelled = true
+            cancel_detect_reason = reason or ""
+            skipped[#skipped + 1] = string.format(
+              "%s (render cancelled: %s)",
+              get_item_label(poly_item),
+              tostring(reason or "")
+            )
+            break
+          elseif not checked and cancel_detect_note == "" then
+            cancel_detect_note = reason or "the rendered files could not be measured"
+          end
         end
 
         if state.post_write_ixml_layout then
@@ -2940,7 +3326,22 @@ local function run_batch_render()
     end
 
     local lines = {}
-    lines[#lines + 1] = "Batch render finished."
+    if cancelled then
+      lines[#lines + 1] = string.format(
+        "Batch render STOPPED (%s).",
+        trim(Q.cancel.reason or "") ~= "" and Q.cancel.reason or "stop requested"
+      )
+      if trim(cancel_detect_reason) ~= "" then
+        lines[#lines + 1] = "Reason: " .. cancel_detect_reason
+      end
+      local not_rendered = #items - rendered - #skipped
+      if not_rendered < 0 then not_rendered = 0 end
+      if not_rendered > 0 then
+        lines[#lines + 1] = string.format("Items left unrendered: %d of %d", not_rendered, #items)
+      end
+    else
+      lines[#lines + 1] = "Batch render finished."
+    end
     lines[#lines + 1] = "Parent: " .. get_track_name(parent)
     lines[#lines + 1] = "Mode: " .. mode_name
     if state.apply_render_profile then
@@ -2952,10 +3353,20 @@ local function run_batch_render()
     else
       lines[#lines + 1] = "Captured render profile apply: disabled"
     end
+    if job and trim(job.name or "") ~= "" then
+      lines[#lines + 1] = "Queue job: " .. job.name
+    end
     if state.enforce_render_filename_pattern then
       lines[#lines + 1] = "Forced filename pattern: " .. forced_filename_pattern
     else
       lines[#lines + 1] = "Forced filename pattern: disabled"
+    end
+    if output_dir_applied then
+      lines[#lines + 1] = "Output folder: " .. output_dir
+    elseif output_dir ~= "" then
+      lines[#lines + 1] = "Output folder (not applied): " .. output_dir
+    else
+      lines[#lines + 1] = "Output folder: project render path"
     end
     lines[#lines + 1] = string.format("Selected items: %d", gathered.total_count)
     lines[#lines + 1] = string.format("Image-ready items: %d", gathered.image_count or 0)
@@ -3048,6 +3459,9 @@ local function run_batch_render()
     else
       lines[#lines + 1] = "URL track info append: disabled"
     end
+    if state.stop_on_render_cancel and trim(cancel_detect_note) ~= "" then
+      lines[#lines + 1] = "Cancel detection unavailable: " .. cancel_detect_note
+    end
     if #skipped > 0 then
       lines[#lines + 1] = string.format("Skipped: %d", #skipped)
       for _, label in ipairs(skipped) do
@@ -3065,6 +3479,7 @@ local function run_batch_render()
     return table.concat(lines, "\n")
   end, debug.traceback)
 
+  Q.render_override.pattern = nil
   restore_cover_metadata(cover_meta_snap)
   restore_forced_channel_layout_metadata(forced_channel_layout_snap)
   restore_layout_visibility_metadata(layout_visibility_snap)
@@ -3076,13 +3491,496 @@ local function run_batch_render()
   r.UpdateArrange()
   r.Undo_EndBlock("POLY Smart Batch Render + Auto Cover Art IMGUI", -1)
 
+  local stats = {
+    rendered = rendered,
+    skipped = #skipped,
+    total = gathered.total_count,
+    output_dir = output_dir_applied and output_dir or "",
+    cancelled = cancelled,
+  }
+
   if not ok then
-    return false, result_or_err
+    return false, result_or_err, stats
   end
-  return true, result_or_err
+  return true, result_or_err, stats
 end
 
-local function refresh_selection_info()
+-- ---------------------------------------------------------------------------
+-- Render queue
+-- ---------------------------------------------------------------------------
+
+local refresh_selection_info
+
+function Q.get_item_guid(item)
+  if not (item and r.ValidatePtr2(0, item, "MediaItem*")) then return nil end
+  local ok, guid = r.GetSetMediaItemInfo_String(item, "GUID", "", false)
+  if ok then
+    guid = trim(guid)
+    if guid ~= "" then return guid end
+  end
+  return nil
+end
+
+function Q.build_project_item_map()
+  local map = {}
+  local count = r.CountMediaItems(0)
+  for i = 0, count - 1 do
+    local item = r.GetMediaItem(0, i)
+    local guid = Q.get_item_guid(item)
+    if guid then map[guid] = item end
+  end
+  return map
+end
+
+function Q.get_cached_item_map(force)
+  local now = r.time_precise and r.time_precise() or os.clock()
+  if force or not state.queue_item_map or (now - (state.queue_item_map_time or 0)) > 1.0 then
+    state.queue_item_map = Q.build_project_item_map()
+    state.queue_item_map_time = now
+  end
+  return state.queue_item_map
+end
+
+function Q.resolve_job_items(job, map)
+  map = map or Q.build_project_item_map()
+  local items = {}
+  local missing = 0
+  for _, guid in ipairs(job.item_guids or {}) do
+    local item = map[guid]
+    if item and r.ValidatePtr2(0, item, "MediaItem*") then
+      items[#items + 1] = item
+    else
+      missing = missing + 1
+    end
+  end
+  return items, missing
+end
+
+function Q.serialize_queue()
+  local out = {}
+  for _, job in ipairs(state.queue or {}) do
+    out[#out + 1] = "JOB"
+    out[#out + 1] = "name=" .. Q.sanitize_line(job.name)
+    out[#out + 1] = "dir=" .. Q.sanitize_line(job.output_dir)
+    out[#out + 1] = "pattern=" .. Q.sanitize_line(job.pattern)
+    out[#out + 1] = "parent=" .. Q.sanitize_line(job.parent_name)
+    out[#out + 1] = "enabled=" .. (job.enabled and "1" or "0")
+    for _, guid in ipairs(job.item_guids or {}) do
+      out[#out + 1] = "item=" .. Q.sanitize_line(guid)
+    end
+    out[#out + 1] = "ENDJOB"
+  end
+  return table.concat(out, "\n")
+end
+
+function Q.save_queue()
+  r.SetProjExtState(0, EXT_SECTION, QUEUE_PROJ_KEY, Q.serialize_queue())
+end
+
+function Q.new_job_table(id)
+  return {
+    id = id,
+    name = "",
+    output_dir = "",
+    pattern = "",
+    parent_name = "",
+    enabled = true,
+    item_guids = {},
+    status = "Pending",
+    message = "",
+    summary = "",
+  }
+end
+
+function Q.load_queue()
+  state.queue = {}
+  state.queue_next_id = 1
+
+  local _, text = r.GetProjExtState(0, EXT_SECTION, QUEUE_PROJ_KEY)
+  if not text or text == "" then return end
+
+  local current = nil
+  for raw_line in tostring(text):gmatch("[^\n]+") do
+    local line = trim(raw_line)
+    if line == "JOB" then
+      current = Q.new_job_table(state.queue_next_id)
+      state.queue_next_id = state.queue_next_id + 1
+    elseif line == "ENDJOB" then
+      if current then
+        if trim(current.name) == "" then
+          current.name = "Job " .. tostring(current.id)
+        end
+        state.queue[#state.queue + 1] = current
+      end
+      current = nil
+    elseif current then
+      local key, value = line:match("^([%w_]+)=(.*)$")
+      if key == "name" then
+        current.name = value
+      elseif key == "dir" then
+        current.output_dir = value
+      elseif key == "pattern" then
+        current.pattern = value
+      elseif key == "parent" then
+        current.parent_name = value
+      elseif key == "enabled" then
+        current.enabled = (value == "1")
+      elseif key == "item" and trim(value) ~= "" then
+        current.item_guids[#current.item_guids + 1] = trim(value)
+      end
+    end
+  end
+end
+
+function Q.get_item_short_name(item)
+  local take = r.GetActiveTake(item)
+  if take then
+    local name = trim(r.GetTakeName(take) or "")
+    if name ~= "" then return name end
+  end
+  local ok, notes = r.GetSetMediaItemInfo_String(item, "P_NOTES", "", false)
+  if ok then
+    local first = trim(tostring(notes or ""):match("^[^\r\n]*") or "")
+    if first ~= "" then return first end
+  end
+  return get_item_label(item)
+end
+
+function Q.add_job(name, items, parent_name)
+  local job = Q.new_job_table(state.queue_next_id)
+  state.queue_next_id = state.queue_next_id + 1
+  job.name = Q.sanitize_line(trim(name) ~= "" and name or ("Job " .. tostring(job.id)))
+  job.parent_name = Q.sanitize_line(parent_name or "")
+  job.output_dir = Q.normalize_dir_path(state.queue_default_dir)
+  for _, item in ipairs(items) do
+    local guid = Q.get_item_guid(item)
+    if guid then
+      job.item_guids[#job.item_guids + 1] = guid
+    end
+  end
+  state.queue[#state.queue + 1] = job
+  return job
+end
+
+function Q.queue_add_selection(split_per_item)
+  if state.queue_run.active then
+    return false, "The queue is running. Stop it before changing the queue."
+  end
+
+  local gathered, err = collect_selected_items()
+  if not gathered then
+    return false, err
+  end
+
+  local items = {}
+  for _, item in ipairs(gathered.items) do
+    items[#items + 1] = item
+  end
+  if state.sort_by_time then
+    sort_items_by_position(items)
+  end
+
+  local parent_name = get_track_name(gathered.parent)
+  local added = 0
+
+  if split_per_item then
+    for _, item in ipairs(items) do
+      local job = Q.add_job(Q.get_item_short_name(item), { item }, parent_name)
+      if #job.item_guids > 0 then
+        added = added + 1
+      else
+        table.remove(state.queue)
+      end
+    end
+  else
+    local job = Q.add_job(
+      string.format("%s (%d item%s)", parent_name, #items, (#items == 1) and "" or "s"),
+      items,
+      parent_name
+    )
+    if #job.item_guids > 0 then
+      added = 1
+    else
+      table.remove(state.queue)
+    end
+  end
+
+  if added == 0 then
+    return false, "Could not read item GUIDs for the current selection."
+  end
+
+  Q.save_queue()
+  Q.get_cached_item_map(true)
+
+  if split_per_item then
+    return true, string.format("Added %d job%s (one per selected item).", added, (added == 1) and "" or "s")
+  end
+  return true, string.format("Added 1 job with %d item%s.", #items, (#items == 1) and "" or "s")
+end
+
+function Q.move_job(index, delta)
+  local target = index + delta
+  if target < 1 or target > #state.queue then return false end
+  state.queue[index], state.queue[target] = state.queue[target], state.queue[index]
+  Q.save_queue()
+  return true
+end
+
+function Q.remove_job(index)
+  if not state.queue[index] then return false end
+  table.remove(state.queue, index)
+  Q.save_queue()
+  return true
+end
+
+function Q.clear_queue()
+  state.queue = {}
+  Q.save_queue()
+end
+
+function Q.remove_finished_jobs()
+  local removed = 0
+  for i = #state.queue, 1, -1 do
+    local st = state.queue[i].status
+    if st == "Done" then
+      table.remove(state.queue, i)
+      removed = removed + 1
+    end
+  end
+  if removed > 0 then Q.save_queue() end
+  return removed
+end
+
+function Q.apply_default_dir_to_all()
+  local dir = Q.normalize_dir_path(state.queue_default_dir)
+  for _, job in ipairs(state.queue) do
+    job.output_dir = dir
+  end
+  Q.save_queue()
+  return #state.queue
+end
+
+function Q.select_job_items(job)
+  local items = Q.resolve_job_items(job, Q.get_cached_item_map(true))
+  if #items == 0 then return 0 end
+  r.SelectAllMediaItems(0, false)
+  for _, item in ipairs(items) do
+    r.SetMediaItemSelected(item, true)
+  end
+  r.UpdateArrange()
+  return #items
+end
+
+function Q.queue_enabled_count()
+  local n = 0
+  for _, job in ipairs(state.queue) do
+    if job.enabled then n = n + 1 end
+  end
+  return n
+end
+
+function Q.finish_queue_run()
+  local run = state.queue_run
+  run.active = false
+  run.phase = "idle"
+
+  local lines = {}
+  lines[#lines + 1] = run.stopped and "Queue run stopped." or "Queue run finished."
+  lines[#lines + 1] = string.format(
+    "Jobs completed: %d | failed: %d | skipped: %d",
+    run.done or 0,
+    run.failed or 0,
+    run.skipped or 0
+  )
+  lines[#lines + 1] = ""
+  for _, entry in ipairs(run.results or {}) do
+    lines[#lines + 1] = string.rep("-", 60)
+    lines[#lines + 1] = entry
+  end
+
+  state.last_summary = table.concat(lines, "\n")
+  state.queue_status = string.format(
+    "%s %d done, %d failed, %d skipped.",
+    run.stopped and "Stopped:" or "Finished:",
+    run.done or 0,
+    run.failed or 0,
+    run.skipped or 0
+  )
+  set_status(run.stopped and "Queue stopped." or "Queue completed.")
+  Q.get_cached_item_map(true)
+  refresh_selection_info()
+end
+
+function Q.start_queue_run()
+  if state.queue_run.active then
+    return false, "The queue is already running."
+  end
+  if #state.queue == 0 then
+    return false, "The queue is empty. Add a selection first."
+  end
+  if Q.queue_enabled_count() == 0 then
+    return false, "No queue jobs are enabled."
+  end
+
+  Q.clear_cancel()
+
+  for _, job in ipairs(state.queue) do
+    job.status = job.enabled and "Pending" or "Disabled"
+    job.message = ""
+  end
+
+  state.queue_run = {
+    active = true,
+    phase = "prepare",
+    index = 1,
+    total = #state.queue,
+    done = 0,
+    failed = 0,
+    skipped = 0,
+    stopped = false,
+    results = {},
+  }
+  state.queue_status = "Queue running..."
+  set_status("Queue started.")
+  return true
+end
+
+function Q.stop_queue_run()
+  Q.request_cancel("Stop button")
+  if not state.queue_run.active then return false end
+  state.queue_run.stopped = true
+  for _, job in ipairs(state.queue) do
+    if job.status == "Pending" or job.status == "Running" then
+      job.status = "Cancelled"
+    end
+  end
+  Q.finish_queue_run()
+  return true
+end
+
+function Q.queue_step()
+  local run = state.queue_run
+  if not run.active then return end
+
+  if Q.poll_cancel() then
+    for _, other in ipairs(state.queue) do
+      if other.status == "Pending" or other.status == "Running" then
+        other.status = "Cancelled"
+      end
+    end
+    run.stopped = true
+    Q.finish_queue_run()
+    return
+  end
+
+  local job = state.queue[run.index]
+  if not job then
+    Q.finish_queue_run()
+    return
+  end
+
+  if not job.enabled then
+    job.status = "Disabled"
+    run.skipped = (run.skipped or 0) + 1
+    run.index = run.index + 1
+    run.phase = "prepare"
+    return
+  end
+
+  if run.phase == "prepare" then
+    job.status = "Running"
+    state.queue_status = string.format(
+      "Rendering job %d of %d: %s",
+      run.index,
+      run.total,
+      job.name
+    )
+    set_status(state.queue_status)
+    run.phase = "render"
+    return
+  end
+
+  local items, missing = Q.resolve_job_items(job, Q.build_project_item_map())
+
+  if #items == 0 then
+    job.status = "Missing"
+    job.message = "None of this job's items were found in the project."
+    run.skipped = (run.skipped or 0) + 1
+    run.results[#run.results + 1] = string.format("%s\nSkipped: %s", job.name, job.message)
+  elseif missing > 0 and not state.queue_skip_missing then
+    job.status = "Missing"
+    job.message = string.format("%d item(s) missing. Enable 'Render jobs with missing items' to run anyway.", missing)
+    run.skipped = (run.skipped or 0) + 1
+    run.results[#run.results + 1] = string.format("%s\nSkipped: %s", job.name, job.message)
+  else
+    local call_ok, ok, msg, stats = pcall(run_batch_render, {
+      items = items,
+      output_dir = job.output_dir,
+      pattern = job.pattern,
+      name = job.name,
+    })
+    if not call_ok then
+      msg = "Render error: " .. tostring(ok)
+      ok = false
+      stats = nil
+    end
+
+    job.summary = msg or ""
+    local was_cancelled = (stats and stats.cancelled) or false
+
+    if ok and was_cancelled then
+      job.status = "Stopped"
+      job.message = string.format(
+        "Stopped after %d of %d item(s).",
+        (stats and stats.rendered) or 0,
+        (stats and stats.total) or #items
+      )
+    elseif ok then
+      job.status = "Done"
+      job.message = string.format(
+        "Rendered %d of %d item(s).",
+        (stats and stats.rendered) or 0,
+        (stats and stats.total) or #items
+      )
+      if missing > 0 then
+        job.message = job.message .. string.format(" %d item(s) were missing and skipped.", missing)
+      end
+      run.done = (run.done or 0) + 1
+    else
+      job.status = "Failed"
+      job.message = trim(tostring(msg or "Render failed."):match("^[^\r\n]*") or "Render failed.")
+      run.failed = (run.failed or 0) + 1
+    end
+    run.results[#run.results + 1] = string.format("%s\n%s", job.name, job.summary ~= "" and job.summary or job.message)
+
+    if was_cancelled or Q.cancel.requested then
+      run.stopped = true
+      for _, other in ipairs(state.queue) do
+        if other.status == "Pending" then other.status = "Cancelled" end
+      end
+      Q.finish_queue_run()
+      return
+    end
+
+    if not ok and state.queue_stop_on_error then
+      run.stopped = true
+      for _, other in ipairs(state.queue) do
+        if other.status == "Pending" then other.status = "Cancelled" end
+      end
+      Q.finish_queue_run()
+      return
+    end
+  end
+
+  run.index = run.index + 1
+  run.phase = "prepare"
+
+  if run.index > #state.queue then
+    Q.finish_queue_run()
+  end
+end
+
+function refresh_selection_info()
   state.selection_info = build_selection_info()
 end
 
@@ -3095,6 +3993,7 @@ else
 end
 
 initialize_rectype_layout_map()
+Q.load_queue()
 refresh_selection_info()
 
 local function draw_overview()
@@ -3133,21 +4032,73 @@ local function draw_overview()
   changed, state.post_patch_channel_mask = r.ImGui_Checkbox(ctx, "Post-patch WAV channel mask in rendered files", state.post_patch_channel_mask)
   if changed then set_ext_bool("post_patch_channel_mask", state.post_patch_channel_mask) end
 
+  changed, state.use_output_dir = r.ImGui_Checkbox(ctx, "Render into a custom output folder", state.use_output_dir)
+  if changed then set_ext_bool("use_output_dir", state.use_output_dir) end
+
+  if state.use_output_dir then
+    Q.set_next_item_width(-260)
+    changed, state.output_dir = r.ImGui_InputText(ctx, "##render_output_dir", state.output_dir or "")
+    if changed then set_ext_text("output_dir", state.output_dir) end
+
+    r.ImGui_SameLine(ctx)
+    local browse_accent = push_button_accent("cool")
+    if r.ImGui_Button(ctx, "Browse...##render_output_dir_browse", 120, 0.0) then
+      local picked = Q.browse_for_folder("Choose the render output folder", state.output_dir)
+      if picked then
+        state.output_dir = picked
+        set_ext_text("output_dir", state.output_dir)
+        set_status("Output folder set: " .. state.output_dir)
+      end
+    end
+    pop_style_colors(browse_accent)
+
+    r.ImGui_SameLine(ctx)
+    if r.ImGui_Button(ctx, "Clear##render_output_dir_clear", 80, 0.0) then
+      state.output_dir = ""
+      set_ext_text("output_dir", "")
+      set_status("Output folder cleared. The project render path will be used.")
+    end
+
+    if trim(state.output_dir) == "" then
+      text_colored_safe("No folder set - the project render path will be used.", color_u32(0.98, 0.80, 0.44, 1.0))
+    end
+  end
+
   local render_accent = push_button_accent("primary")
   if r.ImGui_Button(ctx, "Render Now", 220, 32.0) then
-    set_status("Running batch render...")
-    local ok, msg = run_batch_render()
-    if ok then
-      state.last_summary = msg
-      set_status("Render completed.")
+    if state.queue_run.active then
+      set_status("The render queue is running. Stop it before starting a single render.")
     else
-      state.last_summary = msg or "Render failed."
-      set_status("Render failed.")
-      r.MB(state.last_summary, SCRIPT_TITLE, 0)
+      set_status("Running batch render...")
+      Q.clear_cancel()
+      local ok, msg, stats = run_batch_render()
+      if ok then
+        state.last_summary = msg
+        if stats and stats.cancelled then
+          set_status("Render stopped.")
+        else
+          set_status("Render completed.")
+        end
+      else
+        state.last_summary = msg or "Render failed."
+        set_status("Render failed.")
+        r.MB(state.last_summary, SCRIPT_TITLE, 0)
+      end
+      refresh_selection_info()
     end
-    refresh_selection_info()
   end
   pop_style_colors(render_accent)
+
+  r.ImGui_SameLine(ctx)
+  local stop_accent = push_button_accent("danger")
+  if r.ImGui_Button(ctx, "STOP", 120, 32.0) then
+    Q.request_cancel("Stop button")
+    if state.queue_run.active then
+      Q.stop_queue_run()
+    end
+    set_status("Stop requested. The batch stops after the file that is rendering now.")
+  end
+  pop_style_colors(stop_accent)
 
   r.ImGui_SameLine(ctx)
   local refresh_accent = push_button_accent("cool")
@@ -3157,8 +4108,37 @@ local function draw_overview()
   end
   pop_style_colors(refresh_accent)
 
+  changed, state.stop_on_render_cancel = r.ImGui_Checkbox(ctx, "Cancelling one render cancels the whole batch", state.stop_on_render_cancel)
+  if changed then set_ext_bool("stop_on_render_cancel", state.stop_on_render_cancel) end
+
+  r.ImGui_SameLine(ctx)
+  changed, state.stop_on_escape = r.ImGui_Checkbox(ctx, "Esc also stops the batch", state.stop_on_escape)
+  if changed then set_ext_bool("stop_on_escape", state.stop_on_escape) end
+
+  r.ImGui_TextWrapped(
+    ctx,
+    "How to stop mid-batch: cancel REAPER's own render window (its Cancel button, or Esc). REAPER only cancels that one file, so the script checks the file it just wrote - a short or missing file means you cancelled, and the rest of the selected items and queue jobs are then cancelled too. STOP above stops between files. Render settings, routing and metadata are always restored, and files already finished are kept."
+  )
+
+  if state.stop_on_escape and not Q.escape_available() then
+    text_colored_safe(
+      "js_ReaScriptAPI is not installed, so Esc cannot be read while a file is rendering.",
+      color_u32(0.98, 0.80, 0.44, 1.0)
+    )
+  end
+
+  if Q.cancel.requested then
+    text_colored_safe(
+      "Stop requested (" .. tostring(Q.cancel.reason or "") .. "). It clears when you start the next render.",
+      color_u32(0.98, 0.48, 0.48, 1.0)
+    )
+  end
+
   changed, state.auto_refresh = r.ImGui_Checkbox(ctx, "Auto refresh selection info", state.auto_refresh)
   if changed then set_ext_bool("auto_refresh", state.auto_refresh) end
+
+  r.ImGui_Separator(ctx)
+  Q.draw_queue_section()
 end
 
 local function draw_rectype_layout_settings_tab()
@@ -3232,6 +4212,281 @@ local function draw_rectype_layout_settings_tab()
   r.ImGui_TextWrapped(ctx, "Ambisonic: FOA-AMBIX=W,Y,Z,X | FOA-FUMA=W,X,Y,Z")
 end
 
+Q.QUEUE_STATUS_COLORS = {
+  Pending   = { 0.77, 0.84, 0.94 },
+  Running   = { 0.98, 0.80, 0.44 },
+  Done      = { 0.58, 0.90, 0.62 },
+  Failed    = { 0.98, 0.48, 0.48 },
+  Missing   = { 0.98, 0.48, 0.48 },
+  Stopped   = { 0.98, 0.80, 0.44 },
+  Cancelled = { 0.70, 0.70, 0.78 },
+  Disabled  = { 0.58, 0.60, 0.72 },
+}
+
+function Q.queue_status_color(status)
+  local c = Q.QUEUE_STATUS_COLORS[status or "Pending"] or Q.QUEUE_STATUS_COLORS.Pending
+  return color_u32(c[1], c[2], c[3], 1.0)
+end
+
+function Q.draw_queue_job(index, job, item_map, running)
+  local id = "##job" .. tostring(job.id)
+  local changed = false
+
+  changed, job.enabled = r.ImGui_Checkbox(ctx, id .. "_enabled", job.enabled and true or false)
+  if changed then Q.save_queue() end
+
+  r.ImGui_SameLine(ctx)
+  text_colored_safe(string.format("%d.", index), color_u32(0.55, 0.95, 0.80, 1.0))
+
+  r.ImGui_SameLine(ctx)
+  Q.set_next_item_width(280)
+  changed, job.name = r.ImGui_InputText(ctx, id .. "_name", job.name or "")
+  if changed then
+    job.name = Q.sanitize_line(job.name)
+    Q.save_queue()
+  end
+
+  local _, missing = Q.resolve_job_items(job, item_map)
+  local total_items = #(job.item_guids or {})
+
+  r.ImGui_SameLine(ctx)
+  if r.ImGui_Button(ctx, "Select" .. id .. "_select", 70, 0.0) then
+    local n = Q.select_job_items(job)
+    if n > 0 then
+      set_status(string.format("Selected %d item(s) from job: %s", n, job.name))
+    else
+      set_status("None of this job's items were found in the project.")
+    end
+  end
+
+  if not running then
+    r.ImGui_SameLine(ctx)
+    if r.ImGui_Button(ctx, "Up" .. id .. "_up", 44, 0.0) then
+      Q.move_job(index, -1)
+    end
+    r.ImGui_SameLine(ctx)
+    if r.ImGui_Button(ctx, "Dn" .. id .. "_down", 44, 0.0) then
+      Q.move_job(index, 1)
+    end
+    r.ImGui_SameLine(ctx)
+    local del_accent = push_button_accent("amber")
+    if r.ImGui_Button(ctx, "X" .. id .. "_remove", 34, 0.0) then
+      Q.remove_job(index)
+      pop_style_colors(del_accent)
+      return false
+    end
+    pop_style_colors(del_accent)
+  end
+
+  text_colored_safe("Folder:", color_u32(0.77, 0.84, 0.94, 1.0))
+  r.ImGui_SameLine(ctx)
+  Q.set_next_item_width(-220)
+  changed, job.output_dir = r.ImGui_InputText(ctx, id .. "_dir", job.output_dir or "")
+  if changed then
+    job.output_dir = Q.sanitize_line(job.output_dir)
+    Q.save_queue()
+  end
+
+  r.ImGui_SameLine(ctx)
+  local browse_accent = push_button_accent("cool")
+  if r.ImGui_Button(ctx, "Browse..." .. id .. "_browse", 110, 0.0) then
+    local start_dir = trim(job.output_dir) ~= "" and job.output_dir or state.queue_default_dir
+    local picked = Q.browse_for_folder("Choose the output folder for: " .. tostring(job.name), start_dir)
+    if picked then
+      job.output_dir = picked
+      Q.save_queue()
+      set_status("Job folder set: " .. picked)
+    end
+  end
+  pop_style_colors(browse_accent)
+
+  r.ImGui_SameLine(ctx)
+  if r.ImGui_Button(ctx, "Clear" .. id .. "_dirclear", 80, 0.0) then
+    job.output_dir = ""
+    Q.save_queue()
+  end
+
+  text_colored_safe("Pattern:", color_u32(0.77, 0.84, 0.94, 1.0))
+  r.ImGui_SameLine(ctx)
+  Q.set_next_item_width(-220)
+  changed, job.pattern = r.ImGui_InputText(ctx, id .. "_pattern", job.pattern or "")
+  if changed then
+    job.pattern = Q.sanitize_line(job.pattern)
+    Q.save_queue()
+  end
+  r.ImGui_SameLine(ctx)
+  text_colored_safe("(blank = use the Render tab pattern)", color_u32(0.58, 0.60, 0.72, 1.0))
+
+  local info_color = color_u32(0.77, 0.84, 0.94, 1.0)
+  local info = string.format(
+    "Items: %d%s | Parent: %s | Folder: %s",
+    total_items,
+    (missing > 0) and string.format(" (%d missing)", missing) or "",
+    (trim(job.parent_name or "") ~= "") and job.parent_name or "(unknown)",
+    (trim(job.output_dir) ~= "") and Q.shorten_path(Q.normalize_dir_path(job.output_dir), 52) or "project render path"
+  )
+  text_colored_safe(info, (missing > 0) and color_u32(0.98, 0.80, 0.44, 1.0) or info_color)
+
+  text_colored_safe("Status: " .. tostring(job.status or "Pending"), Q.queue_status_color(job.status))
+  if trim(job.message or "") ~= "" then
+    r.ImGui_SameLine(ctx)
+    text_colored_safe("- " .. job.message, Q.queue_status_color(job.status))
+  end
+  if trim(job.summary or "") ~= "" then
+    r.ImGui_SameLine(ctx)
+    if r.ImGui_Button(ctx, "View log" .. id .. "_log", 90, 0.0) then
+      state.last_summary = job.summary
+      set_status("Showing log for job: " .. tostring(job.name))
+    end
+  end
+
+  return true
+end
+
+function Q.draw_queue_section()
+  local running = state.queue_run.active
+  local item_map = Q.get_cached_item_map(false)
+
+  text_colored_safe("RENDER QUEUE", color_u32(1.00, 0.45, 0.78, 1.00))
+  r.ImGui_TextWrapped(ctx, "Queue several selections and render them one after another. Each job keeps its own items and its own output folder; everything else uses the options above.")
+
+  local changed = false
+
+  text_colored_safe("Default folder for new jobs", color_u32(0.35, 0.90, 0.95, 1.00))
+  Q.set_next_item_width(-220)
+  changed, state.queue_default_dir = r.ImGui_InputText(ctx, "##queue_default_dir", state.queue_default_dir or "")
+  if changed then set_ext_text("queue_default_dir", state.queue_default_dir) end
+
+  r.ImGui_SameLine(ctx)
+  local browse_accent = push_button_accent("cool")
+  if r.ImGui_Button(ctx, "Browse...##queue_default_browse", 110, 0.0) then
+    local picked = Q.browse_for_folder("Choose the default output folder for new jobs", state.queue_default_dir)
+    if picked then
+      state.queue_default_dir = picked
+      set_ext_text("queue_default_dir", state.queue_default_dir)
+      set_status("Default job folder set: " .. picked)
+    end
+  end
+  pop_style_colors(browse_accent)
+
+  r.ImGui_SameLine(ctx)
+  if r.ImGui_Button(ctx, "Apply to all##queue_default_apply", 80, 0.0) then
+    if running then
+      set_status("The queue is running. Stop it before changing job folders.")
+    else
+      local n = Q.apply_default_dir_to_all()
+      state.queue_status = string.format("Applied the default folder to %d job(s).", n)
+      set_status(state.queue_status)
+    end
+  end
+
+  r.ImGui_Separator(ctx)
+
+  local add_accent = push_button_accent("primary")
+  if r.ImGui_Button(ctx, "Add Selection as One Job", 230, 30.0) then
+    local ok, msg = Q.queue_add_selection(false)
+    state.queue_status = msg or ""
+    set_status(msg or "")
+  end
+  pop_style_colors(add_accent)
+
+  r.ImGui_SameLine(ctx)
+  local add_each_accent = push_button_accent("cool")
+  if r.ImGui_Button(ctx, "Add Each Item as a Job", 220, 30.0) then
+    local ok, msg = Q.queue_add_selection(true)
+    state.queue_status = msg or ""
+    set_status(msg or "")
+  end
+  pop_style_colors(add_each_accent)
+
+  if not running then
+    local run_accent = push_button_accent("success")
+    if r.ImGui_Button(ctx, "Run Queue", 150, 30.0) then
+      local ok, msg = Q.start_queue_run()
+      if not ok then
+        state.queue_status = msg or ""
+        set_status(msg or "")
+      end
+    end
+    pop_style_colors(run_accent)
+  else
+    local stop_accent = push_button_accent("danger")
+    if r.ImGui_Button(ctx, "STOP Queue", 150, 30.0) then
+      Q.stop_queue_run()
+      set_status("Stop requested. The queue stops after the file that is rendering now.")
+    end
+    pop_style_colors(stop_accent)
+  end
+
+  r.ImGui_SameLine(ctx)
+  if r.ImGui_Button(ctx, "Remove Finished", 150, 30.0) then
+    if running then
+      set_status("The queue is running. Stop it before changing the queue.")
+    else
+      local n = Q.remove_finished_jobs()
+      state.queue_status = string.format("Removed %d finished job(s).", n)
+      set_status(state.queue_status)
+    end
+  end
+
+  r.ImGui_SameLine(ctx)
+  local clear_accent = push_button_accent("amber")
+  if r.ImGui_Button(ctx, "Clear Queue", 140, 30.0) then
+    if running then
+      set_status("The queue is running. Stop it before clearing it.")
+    else
+      Q.clear_queue()
+      state.queue_status = "Queue cleared."
+      set_status(state.queue_status)
+    end
+  end
+  pop_style_colors(clear_accent)
+
+  r.ImGui_TextWrapped(ctx, "To stop a running queue: press STOP between files, or press Esc while a file is rendering. The queue stops after the current file and keeps everything already rendered.")
+
+  changed, state.queue_stop_on_error = r.ImGui_Checkbox(ctx, "Stop the queue on the first failed job", state.queue_stop_on_error)
+  if changed then set_ext_bool("queue_stop_on_error", state.queue_stop_on_error) end
+
+  r.ImGui_SameLine(ctx)
+  changed, state.queue_skip_missing = r.ImGui_Checkbox(ctx, "Render jobs with missing items", state.queue_skip_missing)
+  if changed then set_ext_bool("queue_skip_missing", state.queue_skip_missing) end
+
+  r.ImGui_Separator(ctx)
+
+  local total_items = 0
+  for _, job in ipairs(state.queue) do
+    total_items = total_items + #(job.item_guids or {})
+  end
+  text_colored_safe(
+    string.format("Jobs: %d (%d enabled) | Items queued: %d", #state.queue, Q.queue_enabled_count(), total_items),
+    color_u32(0.55, 0.95, 0.80, 1.0)
+  )
+  if trim(state.queue_status or "") ~= "" then
+    r.ImGui_SameLine(ctx)
+    text_colored_safe(" | " .. state.queue_status, color_u32(0.77, 0.84, 0.94, 1.0))
+  end
+
+  local started, visible = begin_child_safe("QueueJobs", 240)
+  if started then
+    if visible then
+      if #state.queue == 0 then
+        r.ImGui_TextWrapped(ctx, "The queue is empty. Select items on a POLY parent track and press \"Add Selection as One Job\". Leave it empty to just use Render Now above.")
+      else
+        for i = 1, #state.queue do
+          local job = state.queue[i]
+          if job then
+            if i > 1 then r.ImGui_Separator(ctx) end
+            if not Q.draw_queue_job(i, job, item_map, running) then
+              break
+            end
+          end
+        end
+      end
+      r.ImGui_EndChild(ctx)
+    end
+  end
+end
+
 local function draw_summary()
   text_colored_safe("Summary", color_u32(1.00, 0.45, 0.78, 1.00))
   local started, visible = begin_child_safe("Summary", 220)
@@ -3248,7 +4503,17 @@ local function draw_summary()
 end
 
 local function loop()
-  if state.auto_refresh then
+  if state.queue_run.active then
+    local step_ok, step_err = pcall(Q.queue_step)
+    if not step_ok then
+      state.queue_run.active = false
+      state.queue_run.phase = "idle"
+      state.queue_status = "Queue stopped after an unexpected error: " .. tostring(step_err)
+      set_status(state.queue_status)
+    end
+  end
+
+  if state.auto_refresh and not state.queue_run.active then
     refresh_selection_info()
   end
 
