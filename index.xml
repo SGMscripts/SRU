@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" name="SGM" commit="73c2cade097855cbb6651a978718d51991ffae9d">
+<index version="1" name="SGM" commit="ed17b93a3877b76c84ee3ec16552f7dad6d65c64">
   <category name="Batch Render">
-    <reapack name="POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua" type="script" desc="POLY Smart Batch Render + Auto Cover Art IMGUI sruthin">
+    <reapack name="POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua" type="script" desc="POLY Smart Batch Render + Auto Cover Art IMGUI sruthin (Queue)">
       <metadata>
         <description><![CDATA[{\rtf1\ansi\deff0{\fonttbl{\f0 \fswiss Helvetica;}{\f1 \fmodern Courier;}}
 {\colortbl;\red255\green0\blue0;\red0\green0\blue255;}
@@ -15,6 +15,8 @@
 {\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Inject UCS/ASWG metadata keys into Project Render Metadata\par}
 {\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Update next META marker RecType/Microphone/ixmlTrackLayout/ChannelLayout from active folder child tracks\par}
 {\pard \ql \f0 \sa0 \li360 \fi-360 \bullet \tx360\tab Post-write ixmlTrackLayout/ChannelLayout directly into rendered WAV/BWF files using bwfmetaedit\sa180\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 Stopping a run: While REAPER's render window is up it owns the screen, so the script's STOP button cannot be clicked. Cancel REAPER's render window instead (its Cancel button, or Esc). REAPER cancels only that one file, so the script measures the file it just wrote: a short or missing file means the render was cancelled, and every remaining selected item and queue job is cancelled too. STOP works between files. Files already finished are always kept.\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 Render queue (bottom of the Render page): Select items on a POLY parent track, press "Add Selection as One Job" (or "Add Each Item as a Job"), point that job at any folder on your system, repeat for other selections/parents, then press "Run Queue" to render every job in order. The queue is stored with the project.\par}
 }
 ]]></description>
       </metadata>
@@ -25,6 +27,28 @@
         <changelog><![CDATA[v2.1
 - Hide advanced ChannelLayout/URL metadata toggles and keep those writes enabled by default]]></changelog>
         <source main="main">https://github.com/SGMscripts/SRU/raw/80b936d67b0c97d62d0107ca56cf55ac97b0e03d/Batch%20Render/POLY%20Smart%20Batch%20Render%20IMGUI%20sruthin%20-%20Auto%20Cover%20Art.lua</source>
+      </version>
+      <version name="3.3" author="Sruthin + Codex" time="2026-10-20T13:57:40Z">
+        <changelog><![CDATA[v3.3
+- Cancelling one render in REAPER now cancels every remaining selected item and queue job
+- Detection is by measuring the file REAPER just wrote: a cancelled render leaves a short
+  (or missing) file, which the previous "was a file written" check could not see
+v3.2
+- The render queue now lives on the Render page instead of its own tab
+- Cancelling REAPER's own render window stops the whole batch (no output file written)
+v3.1
+- STOP button on the Render tab and a red STOP Queue button on the Queue tab
+- Press Esc while a file is rendering to stop the whole batch (needs js_ReaScriptAPI)
+- A stopped run still restores render settings, routing and metadata, and keeps finished files
+v3.0 (Queue edition)
+- New Render Queue tab: stack several selections as jobs and render them back to back
+- Per-job output folder (Browse... or typed path) plus optional per-job filename pattern
+- Add the current selection as one job, or as one job per selected item
+- Queue is saved with the project, so it survives closing the script or REAPER
+- Optional custom output folder for one-off renders on the Render tab
+v2.1
+- Hide advanced ChannelLayout/URL metadata toggles and keep those writes enabled by default]]></changelog>
+        <source main="main">https://github.com/SGMscripts/SRU/raw/ed17b93a3877b76c84ee3ec16552f7dad6d65c64/Batch%20Render/POLY%20Smart%20Batch%20Render%20IMGUI%20sruthin%20-%20Auto%20Cover%20Art.lua</source>
       </version>
     </reapack>
   </category>
@@ -209,7 +233,7 @@ ReaPack
 {\pard \ql \f0 \sa0 \li360 \fi-360 4.\tx360\tab Open {\b Extensions > ReaPack > Browse packages}.\par}
 {\pard \ql \f0 \sa0 \li360 \fi-360 5.\tx360\tab Search for {\f1 SGM} or {\f1 Sruthin}, install the scripts you need, then run them from REAPER's Action List.\sa180\par}
 {\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Script Catalog\par}
-{\pard \ql \f0 \sa180 \li0 \fi0 | Area | Script | Purpose | Requirements | | --- | --- | --- | --- | | Batch Render | {\f1 Batch Render/POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua} | Folder-based POLY/stereo batch renders with cover art, UCS metadata, channel-layout patching, and child-media sample-rate matching. | ReaImGui, optional {\f1 bwfmetaedit} | | SFX Detection | {\f1 SGM-Perch-BirdNET/SGM Perch and Birdnet Detect .lua} | ReaImGui front-end for Perch v2 and BirdNET detection workflows. | ReaImGui, Python helper files | | Chirpity | {\f1 Chirpity/Chirpity analysis results to reaper regions SGM .lua} | Imports per-item annotation TXT files as REAPER regions. | REAPER | | Chirpity | {\f1 Chirpity/Chirpity Audacity  to reaper  with insertion offset SGM for Single item .lua} | Imports annotation TXT files at the edit cursor as regions. | REAPER | | Chirpity | {\f1 Chirpity/Copy Unique Marker Names in Time Selection to Clipboard SGM .lua} | Copies unique marker and region names from the time selection, sorted by frequency. | SWS Extension | | Item Editing | {\f1 Item/Align Highest Transient (Smart Priority- Hovered Item > Selection SGM v2.lua} | Aligns hovered or selected item transients to the edit cursor with overlap handling. | REAPER | | Item Editing | {\f1 Item/Create Folder Signal Region Item or Stretch Image SGM.lua} | Creates a folder-track region item from child-track signal under the cursor, or stretches an overlapping image item to that range. | REAPER | | UCS | {\f1 Ucsify/Add meta Marker and rename smart SGM.lua} | Renames takes from UCS clipboard data and adds META markers. | SWS Extension | | UCS | {\f1 Ucsify/Meta markers for selected items from ucsify csv SGM.lua} | Creates META markers from UCS CSV rows matching selected item BWF ranges. | SWS Extension | | UCS | {\f1 Ucsify/inject metaddata fileds SGM.lua} | Pre-populates project render metadata fields for UCS/ASWG workflows. | REAPER 6.33+ recommended |\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 | Area | Script | Purpose | Requirements | | --- | --- | --- | --- | | Batch Render | {\f1 Batch Render/POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua} | Folder-based POLY/stereo batch renders with cover art, UCS metadata, channel-layout patching, child-media sample-rate matching, and a project-saved render queue with per-job output folders. | ReaImGui, optional {\f1 bwfmetaedit} | | SFX Detection | {\f1 SGM-Perch-BirdNET/SGM Perch and Birdnet Detect .lua} | ReaImGui front-end for Perch v2 and BirdNET detection workflows. | ReaImGui, Python helper files | | Chirpity | {\f1 Chirpity/Chirpity analysis results to reaper regions SGM .lua} | Imports per-item annotation TXT files as REAPER regions. | REAPER | | Chirpity | {\f1 Chirpity/Chirpity Audacity  to reaper  with insertion offset SGM for Single item .lua} | Imports annotation TXT files at the edit cursor as regions. | REAPER | | Chirpity | {\f1 Chirpity/Copy Unique Marker Names in Time Selection to Clipboard SGM .lua} | Copies unique marker and region names from the time selection, sorted by frequency. | SWS Extension | | Item Editing | {\f1 Item/Align Highest Transient (Smart Priority- Hovered Item > Selection SGM v2.lua} | Aligns hovered or selected item transients to the edit cursor with overlap handling. | REAPER | | Item Editing | {\f1 Item/Create Folder Signal Region Item or Stretch Image SGM.lua} | Creates a folder-track region item from child-track signal under the cursor, or stretches an overlapping image item to that range. | REAPER | | UCS | {\f1 Ucsify/Add meta Marker and rename smart SGM.lua} | Renames takes from UCS clipboard data and adds META markers. | SWS Extension | | UCS | {\f1 Ucsify/Meta markers for selected items from ucsify csv SGM.lua} | Creates META markers from UCS CSV rows matching selected item BWF ranges. | SWS Extension | | UCS | {\f1 Ucsify/inject metaddata fileds SGM.lua} | Pre-populates project render metadata fields for UCS/ASWG workflows. | REAPER 6.33+ recommended |\par}
 {\pard \ql \f0 \sa180 \li0 \fi0 \outlinelevel1 \b \fs32 Repository Layout\par}
 {\pard \ql \f0 \sa180 \li0 \fi0 \f1 .\line
 |-- Chirpity/             Annotation import and marker utility scripts\line
