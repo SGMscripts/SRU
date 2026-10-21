@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" name="SGM" commit="b5fd8313892323ec6247f70a03dea00091c6bf24">
+<index version="1" name="SGM" commit="b584b20d3db83583e45af259fae22a80abca1a81">
   <category name="Batch Render">
     <reapack name="POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua" type="script" desc="POLY Smart Batch Render + Auto Cover Art IMGUI sruthin (Queue)">
       <metadata>
@@ -237,6 +237,23 @@ v1.0.1
       </metadata>
       <version name="1.0" author="SGM" time="2026-01-01T19:15:59Z">
         <source main="main">https://github.com/SGMscripts/SRU/raw/c0c4980831daa306805d1f026a357f1f71bc1554/Ucsify/Meta%20markers%20for%20selected%20items%20from%20ucsify%20csv%20SGM.lua</source>
+      </version>
+    </reapack>
+  </category>
+  <category name="View">
+    <reapack name="SGM - Remember peak display per project.lua" type="script" desc="Remember peak display per project">
+      <metadata>
+        <description><![CDATA[{\rtf1\ansi\deff0{\fonttbl{\f0 \fswiss Helvetica;}{\f1 \fmodern Courier;}}
+{\colortbl;\red255\green0\blue0;\red0\green0\blue255;}
+\widowctrl\hyphauto
+
+{\pard \ql \f0 \sa180 \li0 \fi0 Remembers each project's peak display mode locally while this script runs. Run once per REAPER session, or add it to your startup actions. Previously visited projects restore their remembered mode; unvisited projects use normal peaks. On startup, the current project keeps its existing mode. Saved projects are identified by file path. Preferences are stored locally, not in the project file, and do not transfer to another computer.\par}
+}
+]]></description>
+      </metadata>
+      <version name="1.0" author="SGM" time="2026-10-21T10:30:23Z">
+        <changelog><![CDATA[Initial release.]]></changelog>
+        <source main="main">https://github.com/SGMscripts/SRU/raw/b584b20d3db83583e45af259fae22a80abca1a81/View/SGM%20-%20Remember%20peak%20display%20per%20project.lua</source>
       </version>
     </reapack>
   </category>
