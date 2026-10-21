@@ -4,6 +4,8 @@ All notable repository-level changes are tracked here. Individual ReaPack packag
 
 ## Unreleased
 
+- Added `View/SGM - Remember peak display per project.lua` v1.0 to remember project peak display choices locally.
+
 - Fixed POLY Smart Batch Render v3.4 truncating multichannel source items to stereo; preserve source channel count and route all channels in order.
 
 - Updated POLY Smart Batch Render to v3.3 with a project-saved render queue, per-job output folders and filename patterns, and batch cancellation when a render is cancelled.
