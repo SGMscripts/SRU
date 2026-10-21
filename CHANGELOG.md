@@ -4,6 +4,8 @@ All notable repository-level changes are tracked here. Individual ReaPack packag
 
 ## Unreleased
 
+- Fixed POLY Smart Batch Render v3.4 truncating multichannel source items to stereo; preserve source channel count and route all channels in order.
+
 - Updated POLY Smart Batch Render to v3.3 with a project-saved render queue, per-job output folders and filename patterns, and batch cancellation when a render is cancelled.
 
 - Updated the POLY Smart Batch Render UI to hide advanced ChannelLayout/URL metadata toggles while keeping those writes enabled.

@@ -1,5 +1,5 @@
 -- @description POLY Smart Batch Render + Auto Cover Art IMGUI sruthin (Queue)
--- @version 3.3
+-- @version 3.4
 -- @author Sruthin + Codex
 -- @about
 --   ReaImGui front-end for folder-based POLY smart batch renders with
@@ -35,6 +35,9 @@
 --     every job in order. The queue is stored with the project.
 --
 -- @changelog
+--   v3.4
+--   - Preserve every source channel in POLY mode, including four-channel and larger items
+--   - Route multichannel sources in channel order and round track capacity to even channel counts
 --   v3.3
 --   - Cancelling one render in REAPER now cancels every remaining selected item and queue job
 --   - Detection is by measuring the file REAPER just wrote: a cancelled render leaves a short
@@ -1116,8 +1119,7 @@ local function get_take_output_channels(item)
 
   if chanmode > 66 then return 2 end
   if chanmode > 1 then return 1 end
-  if src_ch >= 2 then return 2 end
-  return 1
+  return math.max(1, math.floor(src_ch))
 end
 
 local function get_overlapping_item(track, start_t, end_t)
@@ -1277,7 +1279,7 @@ local function restore_render_state(parent, snap)
 end
 
 local function ensure_track_channels(track, needed)
-  local target = math.max(2, math.floor(needed or 2))
+  local target = math.max(2, math.ceil((needed or 2) / 2) * 2)
   local current = r.GetMediaTrackInfo_Value(track, "I_NCHAN")
   if current < target then
     r.SetMediaTrackInfo_Value(track, "I_NCHAN", target)
@@ -3132,16 +3134,21 @@ local function run_batch_render(job)
             local ch = get_take_output_channels(it)
             ensure_track_channels(tr, ch)
 
-            local send = r.CreateTrackSend(tr, parent)
-            if ch == 1 then
-              r.SetTrackSendInfo_Value(tr, 0, send, "I_SRCCHAN", 1024)
-              r.SetTrackSendInfo_Value(tr, 0, send, "I_DSTCHAN", 1024 + dst)
-              dst = dst + 1
-            else
+            ensure_track_channels(parent, dst + ch)
+            if ch == 2 then
+              local send = r.CreateTrackSend(tr, parent)
               r.SetTrackSendInfo_Value(tr, 0, send, "I_SRCCHAN", 0)
               r.SetTrackSendInfo_Value(tr, 0, send, "I_DSTCHAN", dst)
-              dst = dst + 2
+            else
+              -- Mono sends preserve every channel, including odd channel counts,
+              -- without adding a silent channel between consecutive sources.
+              for channel = 0, ch - 1 do
+                local send = r.CreateTrackSend(tr, parent)
+                r.SetTrackSendInfo_Value(tr, 0, send, "I_SRCCHAN", 1024 + channel)
+                r.SetTrackSendInfo_Value(tr, 0, send, "I_DSTCHAN", 1024 + dst + channel)
+              end
             end
+            dst = dst + ch
           end
         end
       end
