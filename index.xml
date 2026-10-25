@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" name="SGM" commit="b584b20d3db83583e45af259fae22a80abca1a81">
+<index version="1" name="SGM" commit="ba01447e2c64f6af82008a098066a77af982f92c">
   <category name="Batch Render">
     <reapack name="POLY Smart Batch Render IMGUI sruthin - Auto Cover Art.lua" type="script" desc="POLY Smart Batch Render + Auto Cover Art IMGUI sruthin (Queue)">
       <metadata>
@@ -247,13 +247,18 @@ v1.0.1
 {\colortbl;\red255\green0\blue0;\red0\green0\blue255;}
 \widowctrl\hyphauto
 
-{\pard \ql \f0 \sa180 \li0 \fi0 Remembers each project's peak display mode locally while this script runs. Run once per REAPER session, or add it to your startup actions. Previously visited projects restore their remembered mode; unvisited projects use normal peaks. On startup, the current project keeps its existing mode. Saved projects are identified by file path. Preferences are stored locally, not in the project file, and do not transfer to another computer.\par}
+{\pard \ql \f0 \sa180 \li0 \fi0 Run once per REAPER session, or from a startup action. Remembers peak display choices locally by saved project path. Unvisited projects use normal peaks. The initial project keeps its current mode. Unsaved projects are remembered only while open. No project audio is changed.\par}
 }
 ]]></description>
       </metadata>
       <version name="1.0" author="SGM" time="2026-10-21T10:30:23Z">
         <changelog><![CDATA[Initial release.]]></changelog>
         <source main="main">https://github.com/SGMscripts/SRU/raw/b584b20d3db83583e45af259fae22a80abca1a81/View/SGM%20-%20Remember%20peak%20display%20per%20project.lua</source>
+      </version>
+      <version name="1.1" author="SGM" time="2026-10-25T03:34:42Z">
+        <changelog><![CDATA[Guard empty/closing projects and duplicate instances; throttle polling.
+Write preferences only when changed, instead of every defer cycle.]]></changelog>
+        <source main="main">https://github.com/SGMscripts/SRU/raw/ba01447e2c64f6af82008a098066a77af982f92c/View/SGM%20-%20Remember%20peak%20display%20per%20project.lua</source>
       </version>
     </reapack>
   </category>
