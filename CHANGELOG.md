@@ -4,6 +4,8 @@ All notable repository-level changes are tracked here. Individual ReaPack packag
 
 ## Unreleased
 
+- Fixed Remember peak display per project v1.1: guard empty/closing projects, replace duplicate instances, and save only changed settings.
+
 - Added `View/SGM - Remember peak display per project.lua` v1.0 to remember project peak display choices locally.
 
 - Fixed POLY Smart Batch Render v3.4 truncating multichannel source items to stereo; preserve source channel count and route all channels in order.
