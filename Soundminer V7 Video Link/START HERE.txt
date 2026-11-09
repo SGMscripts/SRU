@@ -1,0 +1,41 @@
+SOUNDMINER V7 VIDEO LINK — macOS portable package, v1.2
+
+WHAT TO SHARE
+Send the ZIP. Keep the extracted folder together: the Lua panel needs bridge.py beside it. No Codex, Claude, reapy, paid automation app, or extra Python packages are required.
+
+REQUIREMENTS
+• macOS; Intel and Apple Silicon can use their own native installations.
+• REAPER with ReaImGui installed through ReaPack (compatible with API 0.9.3).
+• Soundminer V7 with its bundled SMMCPServer and working MCP access.
+• Python 3.9 or later. If needed, install Python 3 from https://www.python.org/downloads/macos/ .
+Only tested on the author's Mac. Windows is not supported by this package.
+
+INSTALL — ONCE
+1. Extract the ZIP.
+2. In REAPER, choose Options > Show REAPER resource path in Finder.
+3. Copy the entire Soundminer V7 Video Link folder into Scripts.
+4. Open Actions > Show action list. Choose New action > Load ReaScript.
+5. Load Soundminer V7 - Toggle link.lua from that folder.
+6. Optionally assign a shortcut or add that action to a toolbar. No second action is needed.
+
+USE
+Open Soundminer V7 and your REAPER video project. Stop REAPER and place the edit cursor at the desired start. Run the action to open the ImGui panel.
+• Link playback: Soundminer's normal Play/Pause controls REAPER.
+• Mute REAPER audio: mute REAPER's master while auditioning. Audio sent directly to hardware outside the master is not covered. Soundminer needs its own audible output if REAPER master is muted.
+• Return to cursor when Soundminer pauses: on by default. Turn off for pause/resume in place.
+• The return point is captured automatically from REAPER’s edit cursor each time a new audition starts.
+• Stop / Return: pause Soundminer without resetting its position and return REAPER to the saved point.
+Close the panel or run the same action again to disable it. Previous master mute is restored on normal close. If REAPER crashes while muted, unmute its master manually.
+
+NON-STANDARD INSTALL LOCATIONS
+Python is detected at /opt/homebrew/bin/python3, /usr/local/bin/python3, or /usr/bin/python3. To use another installation, create python-path.txt beside the Lua file containing only its full executable path, without quotes.
+Soundminer is detected in /Applications or your user's Applications folder. For another location, create mcp-server-path.txt beside bridge.py containing the full path to Soundminer v7.app/Contents/Resources/SMMCPServer, without quotes.
+
+TROUBLESHOOTING
+Keep bridge.py beside the Lua file. Open V7, not V6. Select an audition sound. Check V7's MCP availability if connection fails. Update ReaImGui if its API cannot load. Errors appear in REAPER.
+Runtime logs are under REAPER's resource folder > Data > SoundminerVideoLink, in per-session folders. These files are local and need not be shared.
+Do not run the old V6 helper alongside this panel.
+
+LIMITATIONS
+This links transport approximately; it is NOT frame-accurate synchronization. MCP polling adds variable latency. Scrubbing, seeking, looping, and varispeed are not chased. Native Soundminer Stop can still rewind Soundminer; use the panel's Stop / Return to retain its position.
+No sound library, license, vendor application, or personal configuration is included.
