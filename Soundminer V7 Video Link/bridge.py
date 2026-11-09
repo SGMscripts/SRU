@@ -1,8 +1,26 @@
-import json,subprocess,time,select,os,sys
+import json,subprocess,time,select,os,sys,ctypes,ctypes.util
 from pathlib import Path
 root=Path(sys.argv[1]); token=sys.argv[2]
 p=None
 buf=b'';seq=0
+# NSWorkspace provides the frontmost application without Accessibility permission.
+ctypes.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit')
+objc=ctypes.CDLL(ctypes.util.find_library('objc'))
+objc.objc_getClass.argtypes=[ctypes.c_char_p];objc.objc_getClass.restype=ctypes.c_void_p
+objc.sel_registerName.argtypes=[ctypes.c_char_p];objc.sel_registerName.restype=ctypes.c_void_p
+objc.objc_msgSend.argtypes=[ctypes.c_void_p,ctypes.c_void_p];objc.objc_msgSend.restype=ctypes.c_void_p
+def msg(obj,selector):
+ return objc.objc_msgSend(obj,objc.sel_registerName(selector.encode())) if obj else None
+def soundminer_frontmost():
+ pool=msg(msg(objc.objc_getClass(b'NSAutoreleasePool'),'alloc'),'init')
+ try:
+  workspace=msg(objc.objc_getClass(b'NSWorkspace'),'sharedWorkspace')
+  app=msg(workspace,'frontmostApplication')
+  ident=msg(msg(app,'bundleIdentifier'),'UTF8String')
+  return bool(ident and ctypes.string_at(ident).decode()=='com.soundminer.v7')
+ finally:
+  msg(pool,'drain')
+
 
 def request(method,params):
  global seq,buf
@@ -42,10 +60,12 @@ try:
  matches=[c for c in commands if c['name']=='Toggle Play']
  if len(matches)!=1:raise RuntimeError('This V7 build does not expose the expected Toggle Play command.')
  play_id=matches[0]['id']
- last=''; ack='0'
+ last=''; ack='0'; front=False; next_focus=0
  while True:
   lease=(root/'lease').read_text().split()
   if lease[0]!=token or time.time()-float(lease[1])>5:break
+  if time.monotonic()>=next_focus:
+   front=soundminer_frontmost();next_focus=time.monotonic()+0.2
   state=call('get_transport')
   command=(root/'command').read_text() if (root/'command').exists() else ''
   if command and command!=last:
@@ -53,7 +73,7 @@ try:
    if command.endswith('return'):
     if state['is_playing']:call('invoke_command',dict(command_id=play_id,wait_ms=1000))
     state=call('get_transport');ack=command.split()[0]
-  atomic('state',' '.join(map(str,[token,time.time(),int(state['is_playing']),state['position_seconds'],state['total_seconds'],int(state['has_file']),ack])))
+  atomic('state',' '.join(map(str,[token,time.time(),int(state['is_playing']),state['position_seconds'],state['total_seconds'],int(state['has_file']),ack,int(front)])))
   time.sleep(.03)
 except Exception as e:atomic('error',str(e))
 finally:

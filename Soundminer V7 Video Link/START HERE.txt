@@ -1,4 +1,4 @@
-SOUNDMINER V7 VIDEO LINK — macOS portable package, v1.3
+SOUNDMINER V7 VIDEO LINK — macOS portable package, v1.4
 
 WHAT TO SHARE
 Send the ZIP. Keep the extracted folder together: the Lua panel needs bridge.py beside it. No Codex, Claude, reapy, paid automation app, or extra Python packages are required.
@@ -21,7 +21,7 @@ INSTALL — ONCE
 USE
 Open Soundminer V7 and your REAPER video project. Stop REAPER and place the edit cursor at the desired start. Run the action to open the ImGui panel.
 • Link playback: Soundminer's normal Play/Pause controls REAPER.
-• Mute REAPER audio: mute REAPER's master while auditioning. Audio sent directly to hardware outside the master is not covered. Soundminer needs its own audible output if REAPER master is muted.
+• Mute REAPER while in Soundminer: automatically mutes REAPER's master when Soundminer is in front and restores its previous mute state when you switch away. Audio sent directly to hardware outside the master is not covered.
 • Follow Soundminer position: corrects larger differences during playback; corrections can cause video jumps.
 • Video offset (ms): positive moves the video ahead; negative moves it later. Adjust while checking a known sync point.
 • Return to cursor when Soundminer pauses: on by default. Turn off for pause/resume in place.

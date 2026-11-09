@@ -42,18 +42,26 @@ local offset=tonumber(r.GetExtState(ns,'offset_ms')) or 0
 local idlePos=nil;local basePos=nil;local lastCorrection=0;local drift=nil;local forceCorrection=false
 local master=r.GetMasterTrack(proj)
 local originalMute=r.GetMediaTrackInfo_Value(master,'B_MUTE')
-r.SetMediaTrackInfo_Value(master,'B_MUTE',1)
+local autoMuted=false
 local status='Connecting to V7…'
 local pendingReturn=false
 local previous=false;local owned=false;local ack='0';local ready=false;local lastLease=0;local started=r.time_precise()
 r.SetExtState(ns,'active','1',false);r.SetToggleCommandState(section,id,1);r.RefreshToolbar2(section,id)
+local function updateMute(shouldMute)
+ if shouldMute and not autoMuted then
+  originalMute=r.GetMediaTrackInfo_Value(master,'B_MUTE')
+  r.SetMediaTrackInfo_Value(master,'B_MUTE',1);autoMuted=true
+ elseif not shouldMute and autoMuted then
+  r.SetMediaTrackInfo_Value(master,'B_MUTE',originalMute);autoMuted=false
+ end
+end
 local function reset()
  if owned then r.OnStopButtonEx(proj) end
  r.SetEditCurPos2(proj,anchor,false,false)
  owned=false; basePos=nil; drift=nil
 end
 r.atexit(function()
- write('lease','off 0');if owned then reset() end;r.SetMediaTrackInfo_Value(master,'B_MUTE',originalMute);r.SetExtState(ns,'active','0',false);r.SetToggleCommandState(section,id,0);r.RefreshToolbar2(section,id)
+ write('lease','off 0');if owned then reset() end;updateMute(false);r.SetExtState(ns,'active','0',false);r.SetToggleCommandState(section,id,0);r.RefreshToolbar2(section,id)
 end)
 local function loop()
  if r.GetExtState(ns,'active')~='1' or r.EnumProjects(-1,'')~=proj or r.GetPlayStateEx(proj)&4~=0 then return end
@@ -63,9 +71,10 @@ local function loop()
   r.DeleteExtState(ns,'return',false);write('command',tostring(now)..' return');pendingReturn=true;reset()
  end
  local err=read('error');if err~='' then r.ShowMessageBox(err,'Soundminer link disconnected',0);return end
- local t,stamp,playing,pos,total,has,newack=read('state'):match('^(%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+)')
+ local t,stamp,playing,pos,total,has,newack,front=read('state'):match('^(%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+)')
  if t==token then
   if os.time()-tonumber(stamp)>4 then r.ShowMessageBox('Soundminer connection timed out.','Soundminer V7',0);return end
+  updateMute(mute and enabled and front=='1')
   local on=playing=='1'
   local smPos=tonumber(pos)
   if not on and not owned then idlePos=smPos end
@@ -92,9 +101,9 @@ local function loop()
  if visible then
   ImGui.Text(ctx,status)
   local changed,value=ImGui.Checkbox(ctx,'Link playback',enabled)
-  if changed then enabled=value;if not enabled then reset() else previous=false end end
-  changed,value=ImGui.Checkbox(ctx,'Mute REAPER audio',mute)
-  if changed then mute=value;r.SetMediaTrackInfo_Value(master,'B_MUTE',mute and 1 or originalMute) end
+  if changed then enabled=value;if not enabled then reset();updateMute(false) else previous=false end end
+  changed,value=ImGui.Checkbox(ctx,'Mute REAPER while in Soundminer',mute)
+  if changed then mute=value;updateMute(mute and enabled and front=='1') end
   changed,value=ImGui.Checkbox(ctx,'Return to cursor when Soundminer pauses',returnOnPause)
   if changed then returnOnPause=value end
   changed,value=ImGui.Checkbox(ctx,'Follow Soundminer position',follow)
