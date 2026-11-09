@@ -6,12 +6,17 @@ buf=b'';seq=0
 # NSWorkspace provides the frontmost application without Accessibility permission.
 ctypes.CDLL('/System/Library/Frameworks/AppKit.framework/AppKit')
 objc=ctypes.CDLL(ctypes.util.find_library('objc'))
+cf=ctypes.CDLL('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation')
+cf.CFRunLoopRunInMode.argtypes=[ctypes.c_void_p,ctypes.c_double,ctypes.c_bool]
+cf.CFRunLoopRunInMode.restype=ctypes.c_int
+default_mode=ctypes.c_void_p.in_dll(cf,'kCFRunLoopDefaultMode')
 objc.objc_getClass.argtypes=[ctypes.c_char_p];objc.objc_getClass.restype=ctypes.c_void_p
 objc.sel_registerName.argtypes=[ctypes.c_char_p];objc.sel_registerName.restype=ctypes.c_void_p
 objc.objc_msgSend.argtypes=[ctypes.c_void_p,ctypes.c_void_p];objc.objc_msgSend.restype=ctypes.c_void_p
 def msg(obj,selector):
  return objc.objc_msgSend(obj,objc.sel_registerName(selector.encode())) if obj else None
 def soundminer_frontmost():
+ cf.CFRunLoopRunInMode(default_mode,0.001,False)
  pool=msg(msg(objc.objc_getClass(b'NSAutoreleasePool'),'alloc'),'init')
  try:
   workspace=msg(objc.objc_getClass(b'NSWorkspace'),'sharedWorkspace')
