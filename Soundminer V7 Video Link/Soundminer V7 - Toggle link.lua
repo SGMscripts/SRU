@@ -37,6 +37,9 @@ local anchor=r.GetCursorPositionEx(proj)
 local enabled=true
 local returnOnPause=true
 local mute=true
+local follow=true
+local offset=tonumber(r.GetExtState(ns,'offset_ms')) or 0
+local idlePos=nil;local basePos=nil;local lastCorrection=0;local drift=nil;local forceCorrection=false
 local master=r.GetMasterTrack(proj)
 local originalMute=r.GetMediaTrackInfo_Value(master,'B_MUTE')
 r.SetMediaTrackInfo_Value(master,'B_MUTE',1)
@@ -47,7 +50,7 @@ r.SetExtState(ns,'active','1',false);r.SetToggleCommandState(section,id,1);r.Ref
 local function reset()
  if owned then r.OnStopButtonEx(proj) end
  r.SetEditCurPos2(proj,anchor,false,false)
- owned=false
+ owned=false; basePos=nil; drift=nil
 end
 r.atexit(function()
  write('lease','off 0');if owned then reset() end;r.SetMediaTrackInfo_Value(master,'B_MUTE',originalMute);r.SetExtState(ns,'active','0',false);r.SetToggleCommandState(section,id,0);r.RefreshToolbar2(section,id)
@@ -64,17 +67,27 @@ local function loop()
  if t==token then
   if os.time()-tonumber(stamp)>4 then r.ShowMessageBox('Soundminer connection timed out.','Soundminer V7',0);return end
   local on=playing=='1'
+  local smPos=tonumber(pos)
+  if not on and not owned then idlePos=smPos end
   if newack~=ack then reset();ack=newack;previous=false;pendingReturn=false end
   status=on and 'Soundminer playing' or 'Soundminer paused / stopped'
   if enabled and not pendingReturn and on and not previous then
-   if not owned then anchor=r.GetCursorPositionEx(proj);owned=true end
+   if not owned then anchor=r.GetCursorPositionEx(proj);basePos=idlePos or smPos;owned=true;forceCorrection=true end
    r.OnPlayButtonEx(proj)
   elseif enabled and not on and previous and owned then
    if returnOnPause then reset() else r.OnPauseButtonEx(proj) end
   end
+  if enabled and follow and owned and on and not pendingReturn and basePos and smPos then
+   local target=math.max(0,anchor+smPos-basePos+offset/1000)
+   drift=target-r.GetPlayPositionEx(proj)
+   if forceCorrection or (now-lastCorrection>0.5 and math.abs(drift)>0.12) then
+    r.SetEditCurPos2(proj,target,false,true)
+    lastCorrection=now;forceCorrection=false
+   end
+  end
   previous=on;ready=true
  elseif not ready and now-started>8 then r.ShowMessageBox('Could not connect to Soundminer V7. Open V7 and try again.','Soundminer V7',0);return end
- ImGui.SetNextWindowSize(ctx,420,260,ImGui.Cond_FirstUseEver)
+ ImGui.SetNextWindowSize(ctx,460,340,ImGui.Cond_FirstUseEver)
  local visible,open=ImGui.Begin(ctx,'Soundminer V7 • Video audition',true)
  if visible then
   ImGui.Text(ctx,status)
@@ -84,6 +97,11 @@ local function loop()
   if changed then mute=value;r.SetMediaTrackInfo_Value(master,'B_MUTE',mute and 1 or originalMute) end
   changed,value=ImGui.Checkbox(ctx,'Return to cursor when Soundminer pauses',returnOnPause)
   if changed then returnOnPause=value end
+  changed,value=ImGui.Checkbox(ctx,'Follow Soundminer position',follow)
+  if changed then follow=value end
+  changed,value=ImGui.SliderInt(ctx,'Video offset (ms)',offset,-1000,1000)
+  if changed then offset=value;forceCorrection=true;r.SetExtState(ns,'offset_ms',tostring(offset),true) end
+  ImGui.TextWrapped(ctx,'Positive offset moves video ahead; negative moves it later. Large corrections may cause jumps.')
   ImGui.Separator(ctx)
   ImGui.Text(ctx,string.format('Return point: %.3f seconds',anchor))
   ImGui.TextWrapped(ctx,'Start point follows the REAPER edit cursor automatically.')
